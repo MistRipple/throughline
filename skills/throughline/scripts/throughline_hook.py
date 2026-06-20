@@ -13,14 +13,26 @@ Safe by design: any error -> emit nothing and exit 0 (never block the turn).
 """
 import json
 import os
+import re
 import shutil
 import sys
 
 INJECT_CAP = 9000  # stay under the ~10k additionalContext limit
 SNAPSHOT_NAME = ".throughline.precompact.bak"
-# A healthy card must carry the objective anchor. If the live card lost it (a degraded
-# post-compaction write), we treat the card as corrupted and fall back to the snapshot.
-HEALTH_ANCHOR = "OBJECTIVE"
+# A healthy card must (a) carry a real objective, (b) not be an unfilled template, and
+# (c) not have been narrowed to "harden/validate/clean up existing code" - which is the
+# exact drift this skill exists to stop, so it must trip the restore path, not pass it.
+OBJECTIVE_RE = re.compile(r"OBJECTIVE\s*:\s*(.+)", re.IGNORECASE)
+PLACEHOLDER_RE = re.compile(r"^<.*>$")  # e.g. "<verbatim original objective>"
+NARROW_RE = re.compile(
+    r"\b(harden|tighten|clean\s*up|validate|audit|review|verify|stabili[sz]e|polish)\b"
+    r".{0,40}\b(existing|current|the)\b",
+    re.IGNORECASE,
+)
+NARROW_LEADING_RE = re.compile(
+    r"^\s*(harden|tighten|clean\s*up|validate|audit|review|stabili[sz]e|polish)\b",
+    re.IGNORECASE,
+)
 
 
 def find_card(start_dir):
@@ -49,8 +61,31 @@ def _read(path):
         return None
 
 
+def _objective(text):
+    """Return the first non-placeholder OBJECTIVE value in the card, or None."""
+    if not text:
+        return None
+    for m in OBJECTIVE_RE.finditer(text):
+        val = m.group(1).strip().strip("`").strip()
+        if not val or PLACEHOLDER_RE.match(val):
+            continue  # unfilled template line
+        return val
+    return None
+
+
 def _healthy(text):
-    return bool(text) and HEALTH_ANCHOR in text
+    """A card is healthy only if it carries a real, non-narrowed objective.
+
+    Missing objective, unfilled template, or an objective collapsed into
+    "harden/validate/clean up the existing code" all count as degraded so the
+    snapshot restore fires for the precise drift case this skill targets.
+    """
+    obj = _objective(text)
+    if obj is None:
+        return False
+    if NARROW_LEADING_RE.match(obj) or NARROW_RE.search(obj):
+        return False
+    return True
 
 
 def main():
@@ -76,9 +111,12 @@ def main():
     # objective + DO-NOT-REPEAT survive even if the card is later corrupted. Overwrite in
     # place so the backup never grows.
     if event_name == "PreCompact":
+        # Only snapshot a HEALTHY card. Snapshotting an already-degraded card would
+        # poison the one trusted baseline the restore path depends on (F3).
         try:
             backup = os.path.join(os.path.dirname(card), SNAPSHOT_NAME)
-            shutil.copyfile(card, backup)
+            if _healthy(_read(card)) or not os.path.isfile(backup):
+                shutil.copyfile(card, backup)
         except Exception:
             pass
         sys.exit(0)

@@ -192,6 +192,63 @@ def test_healthy_card_not_overwritten_by_snapshot():
         ok("healthy live card is never overwritten by the snapshot")
 
 
+def test_narrowed_card_triggers_restore():
+    """The exact drift case: a card narrowed to 'harden existing code' must be treated
+    as degraded and restored from the snapshot, not accepted as healthy."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        card.write_text(
+            "# THROUGHLINE\nOBJECTIVE: Refactor calc.py into a Calculator class\n", encoding="utf-8"
+        )
+        run([sys.executable, str(HOOK)],
+            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
+        # objective collapses to the narrowed form
+        card.write_text("OBJECTIVE: harden the existing code\n", encoding="utf-8")
+        proc = run([sys.executable, str(HOOK)],
+                   input_text=json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"}))
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        if "Refactor calc.py into a Calculator class" not in ctx:
+            fail("narrowed card is restored to original objective", ctx[:200])
+        if "RESTORED" not in ctx:
+            fail("narrowed card restore is flagged", ctx[:200])
+        ok("narrowed objective triggers restore from snapshot")
+
+
+def test_placeholder_card_triggers_restore():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        card.write_text("# THROUGHLINE\nOBJECTIVE: real built feature\n", encoding="utf-8")
+        run([sys.executable, str(HOOK)],
+            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
+        # card reset to unfilled template placeholder
+        card.write_text("OBJECTIVE: <verbatim original objective>\n", encoding="utf-8")
+        proc = run([sys.executable, str(HOOK)],
+                   input_text=json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"}))
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        if "real built feature" not in ctx:
+            fail("placeholder card is restored from snapshot", ctx[:200])
+        ok("placeholder objective triggers restore from snapshot")
+
+
+def test_degraded_card_cannot_poison_snapshot():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        snap = root / ".throughline.precompact.bak"
+        card.write_text("# THROUGHLINE\nOBJECTIVE: build feature Z end to end\n", encoding="utf-8")
+        run([sys.executable, str(HOOK)],
+            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
+        card.write_text("OBJECTIVE: harden the existing code\n", encoding="utf-8")
+        # second PreCompact with a degraded card must NOT overwrite the good snapshot
+        run([sys.executable, str(HOOK)],
+            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
+        if "build feature Z end to end" not in snap.read_text(encoding="utf-8"):
+            fail("degraded card poisoned the snapshot", snap.read_text(encoding="utf-8"))
+        ok("degraded card cannot overwrite a healthy snapshot")
+
+
 def test_claude_install_includes_precompact():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -310,6 +367,9 @@ def main():
     test_precompact_snapshots_card()
     test_degraded_card_recovers_from_snapshot()
     test_healthy_card_not_overwritten_by_snapshot()
+    test_narrowed_card_triggers_restore()
+    test_placeholder_card_triggers_restore()
+    test_degraded_card_cannot_poison_snapshot()
     test_claude_install_includes_precompact()
     test_installer_idempotent_and_preserves_foreign_hooks()
     test_config_toml_wiring_is_safe()
