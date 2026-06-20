@@ -1,0 +1,12 @@
+{
+  "name": "throughline",
+  "version": "0.1.0",
+  "description": "Keep a coding agent on its original objective across context compaction (Codex + Claude Code).",
+  "skills": [
+    {
+      "id": "throughline",
+      "path": "skills/throughline",
+      "entry": "skills/throughline/SKILL.md"
+    }
+  ]
+}
