@@ -70,6 +70,14 @@ Run deterministic local checks first:
 python3 scripts/verify_local.py
 ```
 
+Verify the Claude protection flow (deterministic, no live model). Claude has no scriptable
+knob to force compaction, so this drives the installed hook with real Claude event payloads
+in an isolated `HOME` and checks the snapshot + restore path end to end:
+
+```bash
+python3 scripts/verify_claude_flow.py
+```
+
 Run a live Codex compaction trial when your provider is responsive:
 
 ```bash
