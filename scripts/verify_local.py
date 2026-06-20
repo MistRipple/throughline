@@ -119,6 +119,48 @@ def test_hook_no_card_is_silent():
         ok("hook is silent without a card")
 
 
+def test_precompact_snapshots_card():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        card.write_text(
+            "# THROUGHLINE\nOBJECTIVE: keep original\n"
+            "COMPLETED INPUTS / DO-NOT-REPEAT: cat NOTES.md done\n",
+            encoding="utf-8",
+        )
+        payload = json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"})
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        if proc.returncode != 0:
+            fail("PreCompact hook runs", proc.stderr)
+        if proc.stdout.strip():
+            fail("PreCompact emits no additionalContext", proc.stdout)
+        backup = root / ".throughline.precompact.bak"
+        if not backup.is_file():
+            fail("PreCompact writes a snapshot", "no backup file")
+        if backup.read_text(encoding="utf-8") != card.read_text(encoding="utf-8"):
+            fail("PreCompact snapshot matches the card", "content mismatch")
+        ok("PreCompact snapshots the card without emitting context")
+
+
+def test_claude_install_includes_precompact():
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        proc = run([sys.executable, str(INSTALL), "--claude"], env=env)
+        if proc.returncode != 0:
+            fail("claude install runs", proc.stderr)
+        settings = json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        events = settings["hooks"]
+        for needed in ("PreCompact", "SessionStart", "UserPromptSubmit"):
+            if needed not in events:
+                fail("claude install wires PreCompact + compact recovery", f"missing {needed}")
+        sess_matchers = {e.get("matcher") for e in events["SessionStart"]}
+        if "compact" not in sess_matchers:
+            fail("claude SessionStart includes compact matcher", str(sess_matchers))
+        ok("claude install wires PreCompact snapshot and post-compact re-injection")
+
+
 def test_installer_idempotent_and_preserves_foreign_hooks():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -215,6 +257,8 @@ def main():
     test_card_contract()
     test_hook_resolution()
     test_hook_no_card_is_silent()
+    test_precompact_snapshots_card()
+    test_claude_install_includes_precompact()
     test_installer_idempotent_and_preserves_foreign_hooks()
     test_config_toml_wiring_is_safe()
 

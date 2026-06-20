@@ -13,6 +13,7 @@ Safe by design: any error -> emit nothing and exit 0 (never block the turn).
 """
 import json
 import os
+import shutil
 import sys
 
 INJECT_CAP = 9000  # stay under the ~10k additionalContext limit
@@ -52,6 +53,18 @@ def main():
 
     card = find_card(cwd)
     if not card:
+        sys.exit(0)
+
+    # PreCompact (Claude) cannot steer the summary, and additionalContext at this event is
+    # not reliably injected. The one useful, bounded action is to snapshot the card so the
+    # objective + DO-NOT-REPEAT survive even if the card is later corrupted. Overwrite in
+    # place so the backup never grows.
+    if event_name == "PreCompact":
+        try:
+            backup = os.path.join(os.path.dirname(card), ".throughline.precompact.bak")
+            shutil.copyfile(card, backup)
+        except Exception:
+            pass
         sys.exit(0)
 
     try:

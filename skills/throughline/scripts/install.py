@@ -36,6 +36,9 @@ CLAUDE_EVENTS = {
     "SessionStart": ["startup", "resume", "compact"],
     "UserPromptSubmit": [None],
 }
+# PreCompact has no matcher; the hook snapshots the card before compaction so the
+# objective + DO-NOT-REPEAT survive even if the summary degrades.
+CLAUDE_EVENTS["PreCompact"] = [None]
 
 
 def _cmd():

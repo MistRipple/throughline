@@ -146,6 +146,23 @@ with zero compactions. Real Codex compacts near `300000`, where this is a non-is
 | Compaction-time state-lock | `experimental_compact_prompt_file` | `PreCompact` snapshot |
 | Re-injection | `SessionStart` (startup/resume) + `UserPromptSubmit` | `SessionStart` (startup/resume/**compact**) + `UserPromptSubmit` |
 
+### Protection strength is not equal across tools
+
+Be honest about where the in-process compaction summary is under our control:
+
+| | Codex | Claude Code |
+| --- | --- | --- |
+| Steer the summary the model writes at compaction | **Yes** — `experimental_compact_prompt_file` forces OBJECTIVE LOCK + DO-NOT-REPEAT into the summary itself | **No** — no supported prompt override; `PreCompact` output is additive context, it cannot rewrite the summary |
+| Survive even if the summary degrades | Disk card + injector | `PreCompact` snapshot to `.throughline.precompact.bak` + disk card |
+| Restore objective/progress after compaction | `SessionStart` resume injection | `SessionStart:compact` re-injection (fires right after compaction) |
+| Where the guarantee lives | **Inside** the summary | **Outside** the summary (snapshot before, re-inject after) |
+
+On Codex the objective and completed-inputs are guaranteed *inside* every compaction summary
+(verified: 3/3 runs). On Claude the summary itself can still narrow the goal mid-run; the card
+snapshot and the post-compact re-injection are what pull it back. For long autonomous Claude
+runs, the disk card is the real anchor, and updating COMPLETED INPUTS / DO-NOT-REPEAT at each
+milestone matters more there than on Codex.
+
 ## Layout
 
 ```
