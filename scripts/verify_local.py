@@ -120,6 +120,28 @@ def test_hook_no_card_is_silent():
         ok("hook is silent without a card")
 
 
+def test_injection_is_token_bounded():
+    """An oversized card must never blow up context: injection is hard-capped."""
+    spec = importlib.util.spec_from_file_location("tl_hook_cap", str(HOOK))
+    h = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(h)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        # 50KB card (far past the 8KB template budget)
+        (root / ".throughline.md").write_text(
+            "# THROUGHLINE\nOBJECTIVE: build the thing\n" + ("X" * 50000), encoding="utf-8"
+        )
+        proc = run([sys.executable, str(HOOK)],
+                   input_text=json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"}))
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        if "truncated to injection cap" not in ctx:
+            fail("oversized card is truncated", f"len={len(ctx)}")
+        # prefix + capped body must stay within a small, fixed bound (~2.4k tokens)
+        if len(ctx) > h.INJECT_CAP + 600:
+            fail("injection stays within the hard cap", f"len={len(ctx)} cap={h.INJECT_CAP}")
+        ok("card injection is token-bounded regardless of card size")
+
+
 def test_precompact_snapshots_card():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -444,6 +466,7 @@ def main():
     test_card_contract()
     test_hook_resolution()
     test_hook_no_card_is_silent()
+    test_injection_is_token_bounded()
     test_precompact_snapshots_card()
     test_degraded_card_recovers_from_snapshot()
     test_healthy_card_not_overwritten_by_snapshot()

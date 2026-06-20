@@ -109,20 +109,34 @@ Live Codex, fixed inline-hooks install, `20000`-token limit to force a compactio
 Objective card says **"Build a NEW email notification feature"**; the workspace is salted with
 1500 lines of `harden the existing / clean up existing / tighten legacy` tickets to actively
 pull the model toward narrowing. The question is whether the post-compaction summaries narrow
-"build the feature" into "harden existing code".
+"build the feature" into "harden existing code". Run it yourself:
 
-| metric over the run | result |
-| --- | --- |
-| compactions | 24 |
-| summaries that narrowed objective to "harden existing code" | **0 / 24** |
-| summaries still naming the build target (notifier/notification/email) | 13 / 24 |
-| summaries carrying the `OBJECTIVE LOCK` header | 7 / 24 |
+```bash
+python3 scripts/verify_drift.py --modes single,multi,goal --repeat 2 --token-limit 20000
+```
 
-Zero drift to "harden existing code" across 24 compactions, under heavy noise designed to
-cause exactly that drift. This is the direct evidence that the Codex compaction override holds
-the objective. (At this pathologically tight 20k budget the run thrashes on progress and does
-not finish the edit; the objective-preservation result is what this test isolates, and a
-realistic budget removes the thrash.)
+It isolates `CODEX_HOME`, installs the hooks, forces a compaction storm in each mode, and
+parses **every** compaction summary. `single` is one long autonomous turn; `multi` is a turn
+plus two `codex exec resume` turns (so the resume hook re-injects the card across turns);
+`goal` adds a `TOKEN BUDGET` line to the card to mirror goal mode. Real results from this
+machine:
+
+| mode | runs | compactions | narrowed to "harden existing" | still naming build target | carried `OBJECTIVE LOCK` |
+| --- | --- | --- | --- | --- | --- |
+| single | 2 | 51 | **0** | 46 | 40 |
+| multi | 2 | 51 | **0** | 49 | 31 |
+| goal | 2 | 44 | **0** | 39 | 16 |
+
+Zero drift to "harden existing code" across **146 compactions** in all three modes, under
+heavy noise designed to cause exactly that drift. Whether the run is one turn, several resumed
+turns, or goal-budgeted, the objective is never narrowed. (At this pathologically tight 20k
+budget the run thrashes on progress and may not finish the edit; objective preservation is
+what this test isolates, and a realistic budget removes the thrash.)
+
+The token cost stays bounded while it does this. The objective card here is **735 bytes
+(~183 tokens)**, and the injector hard-caps what it ever feeds the model at 9000 chars
+(~2250 tokens) regardless of card size, so the safeguard cannot itself become a context leak
+(`verify_local.py` asserts this with a 50KB card).
 
 #### Core lever, isolated (the part that survives in-process compaction)
 
