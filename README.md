@@ -75,6 +75,7 @@ Run a live Codex compaction trial when your provider is responsive:
 ```bash
 python3 scripts/run_codex_compaction_trial.py --timeout 900 --keep            # throughline only
 python3 scripts/run_codex_compaction_trial.py --compare --timeout 900         # A/B vs default
+python3 scripts/run_codex_compaction_trial.py --isolate --timeout 900         # baseline vs core lever only
 ```
 
 The live trial creates an isolated `CODEX_HOME` (your real config is never modified),
@@ -83,8 +84,31 @@ reports compaction count, whether the last summary contains `OBJECTIVE LOCK` and
 `COMPLETED INPUTS / DO-NOT-REPEAT`, whether `Calculator` was produced, and how many card
 items were checked. `--compare` runs the default-compaction baseline and throughline
 back to back and prints an A/B table.
+`--isolate` runs the baseline against the **core lever alone** (`compact_prompt.md` enabled,
+no card and no card-aware prompt), so any difference is attributable to the compaction-prompt
+override by itself.
 
 ### Measured results
+
+#### Core lever, isolated (the part that survives in-process compaction)
+
+Live `--isolate` run, Claude Opus 4.8 provider, `60000`-token limit, NOTES.md sized to fit a
+single read. The lever has no on-disk card and no card-aware prompt; the only change vs
+baseline is the compaction-prompt override:
+
+| run | compactions to finish | last summary carries OBJECTIVE LOCK | carries DO-NOT-REPEAT | refactor completed |
+| --- | --- | --- | --- | --- |
+| baseline (default compaction) | 3 | no | no | yes |
+| core lever only | 1 | yes | yes | yes |
+
+The lever's compaction summary reproduced the objective verbatim, marked the NOTES read
+`[x]` done, and under `COMPLETED INPUTS / DO-NOT-REPEAT` recorded `cat NOTES.md` already run
+plus a digest of its content, with NEXT ACTION pointing straight at editing `calc.py`. The
+baseline's summary was a generic handoff with neither structure. The structural carry-forward
+is the robust signal here (the override prompt mandates it); the `1` vs `3` compaction-count
+gap is from a single run and should be read as directional, not a precise benchmark.
+
+#### Brutal-budget A/B
 
 Live A/B through a Claude Opus 4.8 provider, deliberately brutal `40000`-token compaction
 limit with a ~320KB `NOTES.md` (the case that breaks naive setups):
