@@ -268,61 +268,94 @@ def test_claude_install_includes_precompact():
         ok("claude install wires PreCompact snapshot and post-compact re-injection")
 
 
-def test_installer_idempotent_and_preserves_foreign_hooks():
+def test_claude_installer_idempotent_and_preserves_foreign_hooks():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
-        codex_home = home / ".codex"
-        codex_home.mkdir()
-        hooks = codex_home / "hooks.json"
-        hooks.write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "Stop": [
-                            {"hooks": [{"type": "command", "command": "echo foreign"}]}
-                        ]
-                    }
-                }
-            ),
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(
+            json.dumps({"hooks": {"Stop": [
+                {"hooks": [{"type": "command", "command": "echo foreign"}]}]}}),
             encoding="utf-8",
         )
         env = os.environ.copy()
         env["HOME"] = str(home)
-        env["CODEX_HOME"] = str(codex_home)
 
         for _ in range(3):
-            proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
+            proc = run([sys.executable, str(INSTALL), "--claude"], env=env)
             if proc.returncode != 0:
-                fail("installer runs", proc.stderr)
-        data = json.loads(hooks.read_text(encoding="utf-8"))
-        if len(data["hooks"]["SessionStart"]) != 2:
-            fail("installer is idempotent for SessionStart", json.dumps(data, indent=2))
+                fail("claude installer runs", proc.stderr)
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        if len(data["hooks"]["SessionStart"]) != 3:  # startup/resume/compact
+            fail("claude install idempotent for SessionStart", json.dumps(data, indent=2))
         if len(data["hooks"]["UserPromptSubmit"]) != 1:
-            fail("installer is idempotent for UserPromptSubmit", json.dumps(data, indent=2))
+            fail("claude install idempotent for UserPromptSubmit", json.dumps(data, indent=2))
         if "Stop" not in data["hooks"]:
-            fail("installer preserves foreign hooks", json.dumps(data, indent=2))
-        ok("installer is idempotent and preserves foreign hooks")
+            fail("claude install preserves foreign hooks", json.dumps(data, indent=2))
+        ok("claude installer is idempotent and preserves foreign hooks")
 
-        proc = run([sys.executable, str(INSTALL), "--uninstall", "--codex"], env=env)
+        proc = run([sys.executable, str(INSTALL), "--uninstall", "--claude"], env=env)
         if proc.returncode != 0:
-            fail("uninstaller runs", proc.stderr)
-        data = json.loads(hooks.read_text(encoding="utf-8"))
-        if "SessionStart" in data["hooks"] or "UserPromptSubmit" in data["hooks"]:
-            fail("uninstaller removes throughline hooks", json.dumps(data, indent=2))
+            fail("claude uninstaller runs", proc.stderr)
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        if "SessionStart" in data["hooks"] or "PreCompact" in data["hooks"]:
+            fail("claude uninstaller removes throughline hooks", json.dumps(data, indent=2))
         if "Stop" not in data["hooks"]:
-            fail("uninstaller preserves foreign hooks", json.dumps(data, indent=2))
-        ok("uninstaller removes throughline hooks and preserves foreign hooks")
+            fail("claude uninstaller preserves foreign hooks", json.dumps(data, indent=2))
+        ok("claude uninstaller removes throughline hooks and preserves foreign hooks")
 
 
-def test_config_toml_wiring_is_safe():
+def test_codex_install_cleans_legacy_hooks_json():
+    """Older installs left a hooks.json + a rejected string key. The new Codex
+    install must remove our entries from a stray hooks.json (preserving foreign)."""
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        codex_home = home / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text('model = "gpt-5"\n', encoding="utf-8")
+        legacy = codex_home / "hooks.json"
+        legacy.write_text(json.dumps({"hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": "echo foreign"}]}],
+            "SessionStart": [{"matcher": "startup", "hooks": [
+                {"type": "command", "command": 'python3 "x/throughline_hook.py"'}]}],
+        }}), encoding="utf-8")
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["CODEX_HOME"] = str(codex_home)
+        proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
+        if proc.returncode != 0:
+            fail("codex install runs with legacy hooks.json", proc.stderr)
+        data = json.loads(legacy.read_text(encoding="utf-8"))
+        if "SessionStart" in data.get("hooks", {}):
+            fail("legacy throughline entries removed from hooks.json", json.dumps(data))
+        if "Stop" not in data.get("hooks", {}):
+            fail("foreign entries preserved in legacy hooks.json", json.dumps(data))
+        ok("codex install cleans legacy throughline hooks.json and keeps foreign hooks")
+
+
+def _parse_toml(text):
+    try:
+        import tomllib  # py3.11+
+        return tomllib.loads(text)
+    except ModuleNotFoundError:
+        try:
+            import tomli
+            return tomli.loads(text)
+        except ModuleNotFoundError:
+            return None  # no parser available; skip structural assert
+
+
+def test_codex_inline_hooks_wiring():
+    """Codex rejects `hooks = "path"`; hooks must be inline [hooks.*] tables.
+    Verify the installer writes a valid, idempotent, parseable inline block and
+    that uninstall removes it cleanly while preserving the user's config."""
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         codex_home = home / ".codex"
         codex_home.mkdir()
         cfg = codex_home / "config.toml"
         cfg.write_text(
-            'model = "gpt-5"\nhooks = "./my-hooks.json"\n\n[history]\npersistence = "save-all"\n',
-            encoding="utf-8",
+            'model = "gpt-5"\n\n[history]\npersistence = "save-all"\n', encoding="utf-8"
         )
         env = os.environ.copy()
         env["HOME"] = str(home)
@@ -331,32 +364,48 @@ def test_config_toml_wiring_is_safe():
         for _ in range(3):
             proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
             if proc.returncode != 0:
-                fail("config wiring runs", proc.stderr)
+                fail("inline hooks install runs", proc.stderr)
         text = cfg.read_text(encoding="utf-8")
-        compact_lines = [l for l in text.splitlines() if "experimental_compact_prompt_file" in l]
-        if len(compact_lines) != 1:
-            fail("compact prompt key written exactly once", text)
-        # user's own top-level hooks key must be preserved, not duplicated
-        if 'hooks = "./my-hooks.json"' not in text:
-            fail("user hooks key preserved", text)
-        if text.count("hooks =") != 1:
-            fail("user hooks key not duplicated", text)
-        # top-level key must sit before the first table header to stay top-level
-        if text.index("experimental_compact_prompt_file") > text.index("[history]"):
-            fail("compact key stays above the first table", text)
+
+        # exactly one managed block, never the rejected string form
+        if text.count("# >>> throughline") != 1:
+            fail("exactly one managed block after repeated installs", text)
+        if 'hooks = "./hooks.json"' in text or 'hooks="./hooks.json"' in text:
+            fail("must not write the rejected string hooks key", text)
+        for needed in ("[[hooks.UserPromptSubmit]]", "[[hooks.SessionStart]]",
+                       'matcher = "startup"', 'matcher = "resume"',
+                       "experimental_compact_prompt_file"):
+            if needed not in text:
+                fail("inline hooks block has the required tables", f"missing {needed}")
         if not (codex_home / "config.toml.throughline.bak").is_file():
             fail("backup written before edit", text)
-        ok("config wiring inserts compact key safely and preserves user keys")
+
+        parsed = _parse_toml(text)
+        if parsed is not None:
+            hooks = parsed.get("hooks", {})
+            ups = hooks.get("UserPromptSubmit", [])
+            ss = hooks.get("SessionStart", [])
+            if not ups or not ups[0]["hooks"][0]["command"].endswith('throughline_hook.py"'):
+                fail("parsed UserPromptSubmit hook points at our injector", str(ups))
+            matchers = sorted(g.get("matcher") for g in ss)
+            if matchers != ["resume", "startup"]:
+                fail("parsed SessionStart has startup+resume matchers", str(matchers))
+            if "model" not in parsed or "history" not in parsed:
+                fail("user config preserved through inline-hooks install", str(parsed.keys()))
+        ok("codex inline hooks block is valid, idempotent, and parseable")
 
         proc = run([sys.executable, str(INSTALL), "--uninstall", "--codex"], env=env)
         if proc.returncode != 0:
-            fail("config wiring uninstall runs", proc.stderr)
+            fail("inline hooks uninstall runs", proc.stderr)
         text = cfg.read_text(encoding="utf-8")
-        if "throughline-managed" in text or "experimental_compact_prompt_file" in text:
-            fail("uninstall removes managed config lines", text)
-        if 'hooks = "./my-hooks.json"' not in text or "[history]" not in text:
+        if "throughline" in text or "[hooks" in text or "experimental_compact_prompt_file" in text:
+            fail("uninstall removes the entire managed block", text)
+        if 'model = "gpt-5"' not in text or "[history]" not in text:
             fail("uninstall preserves user config", text)
-        ok("config wiring uninstall removes only managed lines")
+        parsed = _parse_toml(text)
+        if parsed is not None and ("model" not in parsed or "history" not in parsed):
+            fail("config still parses after uninstall", str(parsed))
+        ok("codex uninstall removes the block and leaves a valid config")
 
 
 def main():
@@ -371,8 +420,9 @@ def main():
     test_placeholder_card_triggers_restore()
     test_degraded_card_cannot_poison_snapshot()
     test_claude_install_includes_precompact()
-    test_installer_idempotent_and_preserves_foreign_hooks()
-    test_config_toml_wiring_is_safe()
+    test_claude_installer_idempotent_and_preserves_foreign_hooks()
+    test_codex_install_cleans_legacy_hooks_json()
+    test_codex_inline_hooks_wiring()
 
 
 if __name__ == "__main__":

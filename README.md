@@ -39,10 +39,11 @@ cd ~/code/throughline
 ./install.sh --print    # preview the hook entries without writing
 ```
 
-On **Codex** the installer also wires `config.toml` for you: it adds
-`experimental_compact_prompt_file` (the compaction state-lock) and `hooks = "./hooks.json"`
-above the first `[table]`, backs up `config.toml` first, and keeps any value you already set.
-See [codex-setup.md](skills/throughline/references/codex-setup.md).
+On **Codex** the installer wires `config.toml` for you: it writes one managed block (bounded
+by `# >>> throughline >>>` sentinels) with `experimental_compact_prompt_file` plus the inline
+`[hooks.*]` tables Codex actually accepts, backs up `config.toml` first, and removes stray
+legacy `hooks.json` from older installs. Codex rejects `hooks = "./hooks.json"`, so throughline
+never writes that. See [codex-setup.md](skills/throughline/references/codex-setup.md).
 On **Claude**, add a `PreCompact` snapshot; the `SessionStart:compact` hook re-injects after.
 See [claude-setup.md](skills/throughline/references/claude-setup.md).
 
