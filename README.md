@@ -128,10 +128,12 @@ machine:
 | goal | 2 | 44 | **0** | 39 | 16 |
 
 Zero drift to "harden existing code" across **146 compactions** in all three modes, under
-heavy noise designed to cause exactly that drift. Whether the run is one turn, several resumed
-turns, or goal-budgeted, the objective is never narrowed. (At this pathologically tight 20k
-budget the run thrashes on progress and may not finish the edit; objective preservation is
-what this test isolates, and a realistic budget removes the thrash.)
+heavy noise designed to cause exactly that drift. A second independent matrix on the same
+machine reproduced it: **0 drift across 159 compactions** (single 52, multi 56, goal 51).
+Whether the run is one turn, several resumed turns, or goal-budgeted, the objective is never
+narrowed. (At this pathologically tight 20k budget the run thrashes on progress and may not
+finish the edit; objective preservation is what this test isolates, and a realistic budget
+removes the thrash.)
 
 The token cost stays bounded while it does this. The objective card here is **735 bytes
 (~183 tokens)**, and the injector hard-caps what it ever feeds the model at 9000 chars
