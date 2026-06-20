@@ -76,6 +76,7 @@ Run a live Codex compaction trial when your provider is responsive:
 python3 scripts/run_codex_compaction_trial.py --timeout 900 --keep            # throughline only
 python3 scripts/run_codex_compaction_trial.py --compare --timeout 900         # A/B vs default
 python3 scripts/run_codex_compaction_trial.py --isolate --timeout 900         # baseline vs core lever only
+python3 scripts/run_codex_compaction_trial.py --isolate --repeat 3 --timeout 900  # medians over 3 runs each
 ```
 
 The live trial creates an isolated `CODEX_HOME` (your real config is never modified),
@@ -87,26 +88,32 @@ back to back and prints an A/B table.
 `--isolate` runs the baseline against the **core lever alone** (`compact_prompt.md` enabled,
 no card and no card-aware prompt), so any difference is attributable to the compaction-prompt
 override by itself.
+`--repeat N` runs each mode N times and reports the median compaction count, the range, the
+completion rate, and the share of runs whose final summary carried `OBJECTIVE LOCK` and
+`COMPLETED INPUTS / DO-NOT-REPEAT`, so the numbers below are medians rather than single runs.
 
 ### Measured results
 
 #### Core lever, isolated (the part that survives in-process compaction)
 
-Live `--isolate` run, Claude Opus 4.8 provider, `60000`-token limit, NOTES.md sized to fit a
-single read. The lever has no on-disk card and no card-aware prompt; the only change vs
-baseline is the compaction-prompt override:
+Live `--isolate --repeat 3`, Claude Opus 4.8 provider, `60000`-token limit, NOTES.md sized to
+fit a single read. The lever has no on-disk card and no card-aware prompt; the only change vs
+baseline is the compaction-prompt override. Median over 3 runs each:
 
-| run | compactions to finish | last summary carries OBJECTIVE LOCK | carries DO-NOT-REPEAT | refactor completed |
-| --- | --- | --- | --- | --- |
-| baseline (default compaction) | 3 | no | no | yes |
-| core lever only | 1 | yes | yes | yes |
+| mode | runs | compactions (median, range) | completed | summary has OBJECTIVE LOCK | has DO-NOT-REPEAT |
+| --- | --- | --- | --- | --- | --- |
+| baseline (default compaction) | 3 | 1 (1-2) | 3/3 | 0% | 0% |
+| core lever only | 3 | 1 (1-1) | 3/3 | 100% | 100% |
 
-The lever's compaction summary reproduced the objective verbatim, marked the NOTES read
-`[x]` done, and under `COMPLETED INPUTS / DO-NOT-REPEAT` recorded `cat NOTES.md` already run
-plus a digest of its content, with NEXT ACTION pointing straight at editing `calc.py`. The
-baseline's summary was a generic handoff with neither structure. The structural carry-forward
-is the robust signal here (the override prompt mandates it); the `1` vs `3` compaction-count
-gap is from a single run and should be read as directional, not a precise benchmark.
+The honest reading: at a budget where the task can finish, the lever does **not** reliably cut
+the compaction count, and the small-task refactor completes either way. The robust,
+reproducible difference is the **content of the compaction summary**. Every lever run
+reproduced the objective verbatim, marked the NOTES read `[x]` done, and under
+`COMPLETED INPUTS / DO-NOT-REPEAT` recorded `cat NOTES.md` already run plus a digest of its
+content, with NEXT ACTION pointing straight at editing `calc.py`. No baseline run carried
+either structure. That carry-forward is the anti-drift mechanism: even when compaction count
+is identical, whether the summary preserves the original objective and completed work is what
+decides if the resumed model advances or re-derives a narrowed goal.
 
 #### Brutal-budget A/B
 

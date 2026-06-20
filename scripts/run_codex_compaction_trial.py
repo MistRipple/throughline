@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -276,6 +277,38 @@ def _print_compare(results):
         )
 
 
+def _aggregate(mode, trials):
+    comps = sorted(t["compactions"] for t in trials)
+    n = len(trials)
+    return {
+        "mode": mode,
+        "runs": n,
+        "compactions_median": statistics.median(comps),
+        "compactions_min": comps[0],
+        "compactions_max": comps[-1],
+        "completed": sum(1 for t in trials if t["calculator_class"]),
+        "objective_lock_rate": sum(1 for t in trials if t["has_objective_lock"]) / n,
+        "completed_inputs_rate": sum(1 for t in trials if t["has_completed_inputs"]) / n,
+    }
+
+
+def _print_aggregate(aggs):
+    header = (
+        f"{'mode':<12}{'runs':>5}{'comp_median':>12}{'comp_range':>11}"
+        f"{'completed':>11}{'obj_lock':>10}{'do_not_rpt':>12}"
+    )
+    print(header)
+    print("-" * len(header))
+    for a in aggs:
+        rng = f"{a['compactions_min']}-{a['compactions_max']}"
+        done = f"{a['completed']}/{a['runs']}"
+        print(
+            f"{a['mode']:<12}{a['runs']:>5}{a['compactions_median']:>12}{rng:>11}"
+            f"{done:>11}{int(a['objective_lock_rate']*100):>9}%"
+            f"{int(a['completed_inputs_rate']*100):>11}%"
+        )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--codex-home", default=os.path.expanduser("~/.codex"))
@@ -287,6 +320,7 @@ def main():
     ap.add_argument("--compare", action="store_true", help="run baseline then throughline and print an A/B table")
     ap.add_argument("--lever", action="store_true", help="run only the compact-prompt override (no card)")
     ap.add_argument("--isolate", action="store_true", help="run baseline vs lever to isolate the core lever")
+    ap.add_argument("--repeat", type=int, default=1, help="run each mode N times and report medians + rates")
     ap.add_argument("--strip-service-tier", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--minimal-config", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--reasoning-effort", default="low")
@@ -303,11 +337,24 @@ def main():
     else:
         modes = ["throughline"]
 
-    results = [run_trial(args, mode) for mode in modes]
-    print(json.dumps(results if len(results) > 1 else results[0], indent=2))
-    if len(results) > 1:
-        print()
-        _print_compare(results)
+    n = max(1, args.repeat)
+    all_results = []
+    aggs = []
+    for mode in modes:
+        trials = []
+        for i in range(n):
+            if n > 1:
+                print(f"# {mode} run {i + 1}/{n}", file=sys.stderr, flush=True)
+            trials.append(run_trial(args, mode))
+        all_results.extend(trials)
+        aggs.append(_aggregate(mode, trials))
+
+    print(json.dumps(all_results if len(all_results) > 1 else all_results[0], indent=2))
+    print()
+    if n > 1:
+        _print_aggregate(aggs)
+    elif len(all_results) > 1:
+        _print_compare(all_results)
 
 
 if __name__ == "__main__":
