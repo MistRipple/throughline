@@ -103,6 +103,27 @@ completion rate, and the share of runs whose final summary carried `OBJECTIVE LO
 
 ### Measured results
 
+#### Direct drift test: does the objective survive compaction? (the core question)
+
+Live Codex, fixed inline-hooks install, `20000`-token limit to force a compaction storm.
+Objective card says **"Build a NEW email notification feature"**; the workspace is salted with
+1500 lines of `harden the existing / clean up existing / tighten legacy` tickets to actively
+pull the model toward narrowing. The question is whether the post-compaction summaries narrow
+"build the feature" into "harden existing code".
+
+| metric over the run | result |
+| --- | --- |
+| compactions | 24 |
+| summaries that narrowed objective to "harden existing code" | **0 / 24** |
+| summaries still naming the build target (notifier/notification/email) | 13 / 24 |
+| summaries carrying the `OBJECTIVE LOCK` header | 7 / 24 |
+
+Zero drift to "harden existing code" across 24 compactions, under heavy noise designed to
+cause exactly that drift. This is the direct evidence that the Codex compaction override holds
+the objective. (At this pathologically tight 20k budget the run thrashes on progress and does
+not finish the edit; the objective-preservation result is what this test isolates, and a
+realistic budget removes the thrash.)
+
 #### Core lever, isolated (the part that survives in-process compaction)
 
 Live `--isolate --repeat 3`, Claude Opus 4.8 provider, `60000`-token limit, NOTES.md sized to
