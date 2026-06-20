@@ -24,15 +24,18 @@ SNAPSHOT_NAME = ".throughline.precompact.bak"
 # exact drift this skill exists to stop, so it must trip the restore path, not pass it.
 OBJECTIVE_RE = re.compile(r"OBJECTIVE\s*:\s*(.+)", re.IGNORECASE)
 PLACEHOLDER_RE = re.compile(r"^<.*>$")  # e.g. "<verbatim original objective>"
-NARROW_RE = re.compile(
-    r"\b(harden|tighten|clean\s*up|validate|audit|review|verify|stabili[sz]e|polish)\b"
-    r".{0,40}\b(existing|current|the)\b",
-    re.IGNORECASE,
-)
+# The drift signature is an objective whose PRIMARY action is to tighten existing code,
+# e.g. "Harden the existing parser" or "Clean up the current module". Detection requires
+# the narrowing verb to LEAD the objective AND target existing/current code, so a
+# legitimate build that merely mentions a word like "validate" mid-sentence
+# ("Refactor to validate inputs against the new schema") stays healthy.
+NARROW_VERB = r"(?:harden|tighten|clean\s*up|stabili[sz]e|polish|audit|re-?validate)"
+NARROW_TARGET = r"(?:existing|current|the\s+(?:existing|current))"
 NARROW_LEADING_RE = re.compile(
-    r"^\s*(harden|tighten|clean\s*up|validate|audit|review|stabili[sz]e|polish)\b",
-    re.IGNORECASE,
+    rf"^\s*(?:just\s+|only\s+|simply\s+)?{NARROW_VERB}\b(?P<rest>.*)$",
+    re.IGNORECASE | re.DOTALL,
 )
+NARROW_TARGET_RE = re.compile(rf"\b{NARROW_TARGET}\b", re.IGNORECASE)
 
 
 def find_card(start_dir):
@@ -73,6 +76,20 @@ def _objective(text):
     return None
 
 
+def _is_narrowed(obj):
+    """True only when the objective's leading action is tightening existing code."""
+    m = NARROW_LEADING_RE.match(obj)
+    if not m:
+        return False
+    # leading narrowing verb must also point at existing/current code, OR be a bare
+    # "harden/clean up" with no real build target at all.
+    rest = m.group("rest")
+    if NARROW_TARGET_RE.search(obj):
+        return True
+    # bare "harden." / "clean up the code" with no new-build object also counts as drift
+    return len(rest.strip().strip(".").split()) <= 4
+
+
 def _healthy(text):
     """A card is healthy only if it carries a real, non-narrowed objective.
 
@@ -83,9 +100,7 @@ def _healthy(text):
     obj = _objective(text)
     if obj is None:
         return False
-    if NARROW_LEADING_RE.match(obj) or NARROW_RE.search(obj):
-        return False
-    return True
+    return not _is_narrowed(obj)
 
 
 def main():

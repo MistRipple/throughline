@@ -6,6 +6,7 @@ must hold before running an expensive Codex/Claude compaction trial.
 """
 import json
 import os
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -249,6 +250,36 @@ def test_degraded_card_cannot_poison_snapshot():
         ok("degraded card cannot overwrite a healthy snapshot")
 
 
+def test_narrow_detection_matrix():
+    """Narrowing detection must catch real drift without false-positiving on
+    legitimate builds that merely mention a word like 'validate' or 'existing'."""
+    spec = importlib.util.spec_from_file_location("tl_hook", str(HOOK))
+    h = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(h)
+    healthy_ok = [
+        "Refactor to validate inputs against the new schema",
+        "Build a validation service for the existing API",
+        "Refactor calc.py into a Calculator class",
+        "Migrate the existing auth module to OAuth2",
+        "Build a hardening dashboard feature for users",
+    ]
+    degraded = [
+        "harden the existing code",
+        "Harden the existing parser",
+        "Clean up the current module",
+        "tighten existing behavior and validate current code",
+        "just stabilize the existing implementation",
+        "clean up the code",
+    ]
+    for obj in healthy_ok:
+        if not h._healthy("OBJECTIVE: " + obj):
+            fail("legitimate build stays healthy", obj)
+    for obj in degraded:
+        if h._healthy("OBJECTIVE: " + obj):
+            fail("narrowed objective is detected as degraded", obj)
+    ok("narrow detection catches drift without false-positiving on real builds")
+
+
 def test_claude_install_includes_precompact():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -419,6 +450,7 @@ def main():
     test_narrowed_card_triggers_restore()
     test_placeholder_card_triggers_restore()
     test_degraded_card_cannot_poison_snapshot()
+    test_narrow_detection_matrix()
     test_claude_install_includes_precompact()
     test_claude_installer_idempotent_and_preserves_foreign_hooks()
     test_codex_install_cleans_legacy_hooks_json()
