@@ -2,7 +2,7 @@
 """Idempotent installer for throughline hooks (Codex + Claude Code).
 
 Wires throughline_hook.py so the objective card is re-injected on manual turns
-and on resume/session start. Compaction-time objective-lock is configured
+and on resume/session start. Compaction-time state-lock is configured
 separately (see references/) because the two tools differ there.
 
 Usage:

@@ -1,8 +1,9 @@
 # Codex setup
 
-## 1. Compaction-time objective-lock (highest value on Codex)
+## 1. Compaction-time state-lock (highest value on Codex)
 Codex lets you override the summary prompt used at compaction. Point it at the shipped asset
-so every compaction summary begins with a verbatim OBJECTIVE LOCK block.
+so every compaction summary begins with OBJECTIVE LOCK, PROGRESS CHECKLIST, COMPLETED
+INPUTS / DO-NOT-REPEAT, and NEXT ACTION.
 
 In `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`):
 
@@ -11,7 +12,8 @@ experimental_compact_prompt_file = "/ABSOLUTE/PATH/throughline/skills/throughlin
 ```
 
 This is the only Codex control that influences what survives an in-context compaction, so it
-is the most important line to add. Use the absolute path where you cloned the repo.
+is the most important line to add. Use the absolute path where you cloned the repo. The
+completed-inputs section is the key guard against repeated large-file reads after compaction.
 
 ## 2. Injector hook (manual turns + resume)
 ```bash

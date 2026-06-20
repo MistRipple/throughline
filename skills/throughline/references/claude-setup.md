@@ -15,8 +15,9 @@ Claude cannot override the compaction summary prompt the way Codex can. What it 
 is lost even if the summary degrades; the `SessionStart:compact` hook then re-injects after.
 
 Practical consequence: on Claude the disk card carries more of the load, because no verbatim
-objective-lock is injected into the summary itself. Re-read and update the card at every
-milestone, and rely on the `compact` matcher to restore it immediately afterward.
+state-lock is injected into the summary itself. Re-read and update the card at every
+milestone, especially COMPLETED INPUTS / DO-NOT-REPEAT, and rely on the `compact` matcher to
+restore it immediately afterward.
 
 ## 3. Verify
 ```bash

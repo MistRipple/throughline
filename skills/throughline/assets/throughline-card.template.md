@@ -31,6 +31,11 @@ TASK TYPE: <refactor | feature | bugfix | migration | investigation>
      OBJECTIVE), write "DRIFT?: <why>" here instead of a step. -->
 <next step>
 
+## === COMPLETED INPUTS / DO-NOT-REPEAT ===
+<!-- Expensive reads/scans already completed. Keep <= 12 items. Include evidence + conclusion.
+     Use this to prevent compaction loops that keep re-reading the same large files. -->
+- <path or command> | <evidence> | <conclusion>
+
 ## === DECISIONS (bounded, last 10) ===
 <!-- Newest on top; delete entries beyond 10 to respect the size budget.
      One line each: date | decision | reason. -->

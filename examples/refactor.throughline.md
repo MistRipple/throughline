@@ -28,5 +28,9 @@ TASK TYPE: refactor
 ## === NEXT ACTION ===
 Move mul/div into Calculator methods, mirroring the add/sub pattern already in place.
 
+## === COMPLETED INPUTS / DO-NOT-REPEAT ===
+- `cat NOTES.md` | read full conventions ledger once | boilerplate only; no hidden instructions
+- `cat calc.py` | inspected current functions and CLI dispatch | preserve `python3 calc.py add 2 3` -> `5.0`
+
 ## === DECISIONS (bounded, last 10) ===
 - 2026-06-20 | Keep function wrappers until CLI is switched | avoids a big-bang break mid-refactor
