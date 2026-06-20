@@ -115,28 +115,34 @@ either structure. That carry-forward is the anti-drift mechanism: even when comp
 is identical, whether the summary preserves the original objective and completed work is what
 decides if the resumed model advances or re-derives a narrowed goal.
 
-#### Brutal-budget A/B
+#### Brutal-budget compaction storm (the user's actual pain)
 
-Live A/B through a Claude Opus 4.8 provider, deliberately brutal `40000`-token compaction
-limit with a ~320KB `NOTES.md` (the case that breaks naive setups):
+Live A/B, Claude Opus 4.8 provider, deliberately brutal `40000`-token limit with a ~320KB
+`NOTES.md` whose single read alone exceeds the budget. This forces a true compaction storm,
+the long-autonomous-run failure that motivates the skill. One representative run:
 
-| run | compactions to finish | refactor completed |
-| --- | --- | --- |
-| throughline | 16 | yes, correct |
-| default baseline | 27 | yes, eventually |
-| throughline (2nd run) | 49+ | no; anti-loop fired but the edit never landed |
+| run | compactions | refactor completed | final summary preserved objective + DO-NOT-REPEAT |
+| --- | --- | --- | --- |
+| default baseline | 46 | yes, eventually | no structure (objective survived as prose; no anti-repeat) |
+| throughline | 54 | no (hit the run cap) | yes: OBJECTIVE LOCK + DO-NOT-REPEAT in every summary |
 
-The decisive mechanism is visible in the rollout: every throughline compaction summary
-carries a `COMPLETED INPUTS / DO-NOT-REPEAT` block that records "cat NOTES.md: already
-read ... DO NOT re-read," and the resuming model acts on it ("summary says NOTES.md is
-already read, so I'll skip it and go to edit"). The old failure of re-reading the large
-file forever is gone, and throughline reaches the same correct result with fewer
-compactions than the baseline.
+Two honest findings from this storm:
 
-Honest limit: at a pathologically tight budget the per-turn working set (resume summary +
-tool schemas + reading the target file) can itself approach the limit, so completion is
-timing-sensitive and high-variance. At a realistic budget (`120000`) the task completes
-with zero compactions. Real Codex compacts near `300000`, where this is a non-issue.
+1. The structural guarantee holds even under extreme pressure: every throughline summary
+   still carried OBJECTIVE LOCK and COMPLETED INPUTS / DO-NOT-REPEAT, where the baseline
+   carried neither. The objective is never narrowed to "harden/validate" in either arm on
+   this refactor task; the dominant failure here is **progress loss / re-reading**, not goal
+   narrowing.
+2. At a pathologically tight budget the result is high-variance and the override does **not**
+   guarantee fewer compactions. In this run throughline thrashed *more* than baseline and did
+   not land the edit before the cap. When the per-turn working set (resume summary + tool
+   schemas + the file read) approaches the whole budget, no compaction prompt can recover it.
+
+Practical reading: throughline's job is to make every compaction summary carry the objective
+and completed work forward, and it does that reliably. It is **not** a way to survive a budget
+so small that a single necessary read won't fit. At a realistic budget (`120000`) the task
+completes with zero compactions; real Codex compacts near `300000`, where the storm does not
+occur and the carry-forward is pure upside.
 
 ## How it's wired
 
