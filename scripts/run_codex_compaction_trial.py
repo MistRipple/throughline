@@ -186,16 +186,24 @@ BASELINE_PROMPT = (
 
 
 def run_trial(args, mode):
-    """Run a single Codex trial. mode is 'throughline' or 'baseline'."""
-    throughline = mode == "throughline"
+    """Run a single Codex trial.
+
+    Modes:
+      baseline    - Codex default compaction, no card, no prompt override.
+      lever       - ONLY the compact-prompt override; no card, baseline prompt.
+                    Isolates the one control that affects in-process compaction.
+      throughline - full skill: prompt override + on-disk card + card-aware prompt.
+    """
+    override = mode in ("throughline", "lever")
+    with_card = mode == "throughline"
     prefix = f"throughline-trial-{mode}-"
     base = Path(tempfile.mkdtemp(prefix=prefix))
     home = base / ".codex"
     work = base / "work"
     copy_codex_home(Path(args.codex_home), home, args.strip_service_tier, args.minimal_config)
-    write_fixture(work, args.notes_lines, with_card=throughline)
+    write_fixture(work, args.notes_lines, with_card=with_card)
 
-    prompt = THROUGHLINE_PROMPT if throughline else BASELINE_PROMPT
+    prompt = THROUGHLINE_PROMPT if mode == "throughline" else BASELINE_PROMPT
     out = base / "run.jsonl"
     err = base / "run.err"
     cmd = [
@@ -210,9 +218,9 @@ def run_trial(args, mode):
         "-c",
         f'model_reasoning_effort="{args.reasoning_effort}"',
     ]
-    # throughline's compaction-time lock is the experimental compact prompt override;
-    # baseline uses Codex's default compaction so the comparison isolates the skill.
-    if throughline:
+    # The compaction-time lock is the experimental compact prompt override. baseline uses
+    # Codex's default compaction; lever adds only the override; throughline adds card too.
+    if override:
         cmd += ["-c", f'experimental_compact_prompt_file="{PROMPT}"']
     cmd.append(prompt)
 
@@ -277,13 +285,19 @@ def main():
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--baseline", action="store_true", help="run the default-compaction baseline only")
     ap.add_argument("--compare", action="store_true", help="run baseline then throughline and print an A/B table")
+    ap.add_argument("--lever", action="store_true", help="run only the compact-prompt override (no card)")
+    ap.add_argument("--isolate", action="store_true", help="run baseline vs lever to isolate the core lever")
     ap.add_argument("--strip-service-tier", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--minimal-config", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--reasoning-effort", default="low")
     args = ap.parse_args()
 
-    if args.compare:
+    if args.isolate:
+        modes = ["baseline", "lever"]
+    elif args.compare:
         modes = ["baseline", "throughline"]
+    elif args.lever:
+        modes = ["lever"]
     elif args.baseline:
         modes = ["baseline"]
     else:
