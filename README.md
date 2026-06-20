@@ -35,21 +35,19 @@ fresh thread at a milestone, carrying the card forward.
 ```bash
 git clone <this-repo> ~/code/throughline
 cd ~/code/throughline
-./install.sh            # wires the hook into Codex + Claude
+./install.sh            # wires Codex + Claude (hooks + Codex config.toml)
 ./install.sh --print    # preview the hook entries without writing
 ```
 
-Then finish the tool-specific wiring (the high-value part):
-
-- **Codex**: in `~/.codex/config.toml` set
-  `experimental_compact_prompt_file = ".../skills/throughline/assets/compact_prompt.md"`
-  and `hooks = "./hooks.json"`. See
-  [codex-setup.md](skills/throughline/references/codex-setup.md).
-- **Claude**: add a `PreCompact` snapshot; the `SessionStart:compact` hook re-injects after.
-  See [claude-setup.md](skills/throughline/references/claude-setup.md).
+On **Codex** the installer also wires `config.toml` for you: it adds
+`experimental_compact_prompt_file` (the compaction state-lock) and `hooks = "./hooks.json"`
+above the first `[table]`, backs up `config.toml` first, and keeps any value you already set.
+See [codex-setup.md](skills/throughline/references/codex-setup.md).
+On **Claude**, add a `PreCompact` snapshot; the `SessionStart:compact` hook re-injects after.
+See [claude-setup.md](skills/throughline/references/claude-setup.md).
 
 Uninstall any time: `./install.sh --uninstall`. The installer is idempotent and preserves
-other tools' hooks.
+other tools' hooks and your own config keys.
 
 ## Use
 

@@ -165,12 +165,58 @@ def test_installer_idempotent_and_preserves_foreign_hooks():
         ok("uninstaller removes throughline hooks and preserves foreign hooks")
 
 
+def test_config_toml_wiring_is_safe():
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        codex_home = home / ".codex"
+        codex_home.mkdir()
+        cfg = codex_home / "config.toml"
+        cfg.write_text(
+            'model = "gpt-5"\nhooks = "./my-hooks.json"\n\n[history]\npersistence = "save-all"\n',
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["CODEX_HOME"] = str(codex_home)
+
+        for _ in range(3):
+            proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
+            if proc.returncode != 0:
+                fail("config wiring runs", proc.stderr)
+        text = cfg.read_text(encoding="utf-8")
+        compact_lines = [l for l in text.splitlines() if "experimental_compact_prompt_file" in l]
+        if len(compact_lines) != 1:
+            fail("compact prompt key written exactly once", text)
+        # user's own top-level hooks key must be preserved, not duplicated
+        if 'hooks = "./my-hooks.json"' not in text:
+            fail("user hooks key preserved", text)
+        if text.count("hooks =") != 1:
+            fail("user hooks key not duplicated", text)
+        # top-level key must sit before the first table header to stay top-level
+        if text.index("experimental_compact_prompt_file") > text.index("[history]"):
+            fail("compact key stays above the first table", text)
+        if not (codex_home / "config.toml.throughline.bak").is_file():
+            fail("backup written before edit", text)
+        ok("config wiring inserts compact key safely and preserves user keys")
+
+        proc = run([sys.executable, str(INSTALL), "--uninstall", "--codex"], env=env)
+        if proc.returncode != 0:
+            fail("config wiring uninstall runs", proc.stderr)
+        text = cfg.read_text(encoding="utf-8")
+        if "throughline-managed" in text or "experimental_compact_prompt_file" in text:
+            fail("uninstall removes managed config lines", text)
+        if 'hooks = "./my-hooks.json"' not in text or "[history]" not in text:
+            fail("uninstall preserves user config", text)
+        ok("config wiring uninstall removes only managed lines")
+
+
 def main():
     test_prompt_contract()
     test_card_contract()
     test_hook_resolution()
     test_hook_no_card_is_silent()
     test_installer_idempotent_and_preserves_foreign_hooks()
+    test_config_toml_wiring_is_safe()
 
 
 if __name__ == "__main__":

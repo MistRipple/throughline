@@ -49,9 +49,11 @@ python3 scripts/install.py            # both tools
 python3 scripts/install.py --codex    # or one
 python3 scripts/install.py --print    # preview without writing
 ```
-The installer is idempotent and preserves other tools' hooks. Then finish tool wiring:
-- Codex: add `experimental_compact_prompt_file` (the compaction state-lock) and `hooks = "./hooks.json"` to `config.toml`. See [codex-setup.md](references/codex-setup.md).
-- Claude: add a `PreCompact` snapshot; the `SessionStart:compact` hook re-injects after. See [claude-setup.md](references/claude-setup.md).
+The installer is idempotent and preserves other tools' hooks. On Codex it also wires the two
+`config.toml` keys for you (`experimental_compact_prompt_file` + `hooks = "./hooks.json"`),
+inserting them above the first `[table]`, backing up `config.toml` first, and keeping any keys
+you already set. See [codex-setup.md](references/codex-setup.md). On Claude, add a `PreCompact`
+snapshot; the `SessionStart:compact` hook re-injects after. See [claude-setup.md](references/claude-setup.md).
 
 ### 5. On long/autonomous runs
 The card is the anchor because in-process compaction can fire many times without any hook
