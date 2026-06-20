@@ -75,13 +75,39 @@ python3 scripts/verify_local.py
 Run a live Codex compaction trial when your provider is responsive:
 
 ```bash
-python3 scripts/run_codex_compaction_trial.py --timeout 420 --keep
+python3 scripts/run_codex_compaction_trial.py --timeout 900 --keep            # throughline only
+python3 scripts/run_codex_compaction_trial.py --compare --timeout 900         # A/B vs default
 ```
 
-The live trial creates an isolated `CODEX_HOME`, generates a small refactor task plus a
-large `NOTES.md`, enables throughline's compact prompt, then reports compaction count,
-whether the last summary contains `OBJECTIVE LOCK` and `COMPLETED INPUTS / DO-NOT-REPEAT`,
-whether `Calculator` was produced, and how many card items were checked.
+The live trial creates an isolated `CODEX_HOME` (your real config is never modified),
+generates a small refactor task plus a large `NOTES.md` sized to force compaction, then
+reports compaction count, whether the last summary contains `OBJECTIVE LOCK` and
+`COMPLETED INPUTS / DO-NOT-REPEAT`, whether `Calculator` was produced, and how many card
+items were checked. `--compare` runs the default-compaction baseline and throughline
+back to back and prints an A/B table.
+
+### Measured results
+
+Live A/B through a Claude Opus 4.8 provider, deliberately brutal `40000`-token compaction
+limit with a ~320KB `NOTES.md` (the case that breaks naive setups):
+
+| run | compactions to finish | refactor completed |
+| --- | --- | --- |
+| throughline | 16 | yes, correct |
+| default baseline | 27 | yes, eventually |
+| throughline (2nd run) | 49+ | no; anti-loop fired but the edit never landed |
+
+The decisive mechanism is visible in the rollout: every throughline compaction summary
+carries a `COMPLETED INPUTS / DO-NOT-REPEAT` block that records "cat NOTES.md: already
+read ... DO NOT re-read," and the resuming model acts on it ("summary says NOTES.md is
+already read, so I'll skip it and go to edit"). The old failure of re-reading the large
+file forever is gone, and throughline reaches the same correct result with fewer
+compactions than the baseline.
+
+Honest limit: at a pathologically tight budget the per-turn working set (resume summary +
+tool schemas + reading the target file) can itself approach the limit, so completion is
+timing-sensitive and high-variance. At a realistic budget (`120000`) the task completes
+with zero compactions. Real Codex compacts near `300000`, where this is a non-issue.
 
 ## How it's wired
 

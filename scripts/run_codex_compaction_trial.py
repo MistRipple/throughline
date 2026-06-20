@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROMPT = ROOT / "skills" / "throughline" / "assets" / "compact_prompt.md"
 
 
-def write_fixture(work: Path, notes_lines: int) -> None:
+def write_fixture(work: Path, notes_lines: int, with_card: bool = True) -> None:
     work.mkdir(parents=True, exist_ok=True)
     (work / "calc.py").write_text(
         """import sys
@@ -55,6 +55,8 @@ if __name__ == "__main__":
         "# Project Conventions Ledger\n\n" + "\n".join(lines) + "\n",
         encoding="utf-8",
     )
+    if not with_card:
+        return
     (work / ".throughline.md").write_text(
         """# THROUGHLINE
 meta:
@@ -163,35 +165,37 @@ def parse_rollout(path: Path):
     return compactions
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--codex-home", default=os.path.expanduser("~/.codex"))
-    ap.add_argument("--timeout", type=int, default=420)
-    ap.add_argument("--token-limit", type=int, default=40000)
-    ap.add_argument("--notes-lines", type=int, default=2200)
-    ap.add_argument("--work-root", default=None, help="default: temporary directory")
-    ap.add_argument("--keep", action="store_true")
-    ap.add_argument("--strip-service-tier", action=argparse.BooleanOptionalAction, default=True)
-    ap.add_argument("--minimal-config", action=argparse.BooleanOptionalAction, default=True)
-    ap.add_argument("--reasoning-effort", default="low")
-    args = ap.parse_args()
+THROUGHLINE_PROMPT = (
+    "Your task: refactor calc.py so that add, sub, mul, and div become methods of "
+    "a new class called Calculator, while keeping the command-line behavior identical.\n\n"
+    "Use throughline: .throughline.md is the task state. Respect COMPLETED INPUTS / "
+    "DO-NOT-REPEAT. If a compaction summary says NOTES.md was already read, advance "
+    "to editing calc.py.\n\n"
+    "First, read the ENTIRE contents of NOTES.md exactly once with `cat NOTES.md`. "
+    "Then implement the refactor in calc.py. When done, run `python3 calc.py add 2 3` "
+    "and update .throughline.md."
+)
 
-    base = Path(args.work_root) if args.work_root else Path(tempfile.mkdtemp(prefix="throughline-trial-"))
+BASELINE_PROMPT = (
+    "Your task: refactor calc.py so that add, sub, mul, and div become methods of "
+    "a new class called Calculator, while keeping the command-line behavior identical. "
+    "First, read the ENTIRE contents of NOTES.md once with `cat NOTES.md` to absorb "
+    "project conventions. Then implement the refactor in calc.py. When done, run "
+    "`python3 calc.py add 2 3` to confirm it prints 5.0."
+)
+
+
+def run_trial(args, mode):
+    """Run a single Codex trial. mode is 'throughline' or 'baseline'."""
+    throughline = mode == "throughline"
+    prefix = f"throughline-trial-{mode}-"
+    base = Path(tempfile.mkdtemp(prefix=prefix))
     home = base / ".codex"
     work = base / "work"
     copy_codex_home(Path(args.codex_home), home, args.strip_service_tier, args.minimal_config)
-    write_fixture(work, args.notes_lines)
+    write_fixture(work, args.notes_lines, with_card=throughline)
 
-    prompt = (
-        "Your task: refactor calc.py so that add, sub, mul, and div become methods of "
-        "a new class called Calculator, while keeping the command-line behavior identical.\n\n"
-        "Use throughline: .throughline.md is the task state. Respect COMPLETED INPUTS / "
-        "DO-NOT-REPEAT. If a compaction summary says NOTES.md was already read, advance "
-        "to editing calc.py.\n\n"
-        "First, read the ENTIRE contents of NOTES.md exactly once with `cat NOTES.md`. "
-        "Then implement the refactor in calc.py. When done, run `python3 calc.py add 2 3` "
-        "and update .throughline.md."
-    )
+    prompt = THROUGHLINE_PROMPT if throughline else BASELINE_PROMPT
     out = base / "run.jsonl"
     err = base / "run.err"
     cmd = [
@@ -202,13 +206,16 @@ def main():
         "-C",
         str(work),
         "-c",
-        f'model_auto_compact_token_limit={args.token_limit}',
-        "-c",
-        f'experimental_compact_prompt_file="{PROMPT}"',
+        f"model_auto_compact_token_limit={args.token_limit}",
         "-c",
         f'model_reasoning_effort="{args.reasoning_effort}"',
-        prompt,
     ]
+    # throughline's compaction-time lock is the experimental compact prompt override;
+    # baseline uses Codex's default compaction so the comparison isolates the skill.
+    if throughline:
+        cmd += ["-c", f'experimental_compact_prompt_file="{PROMPT}"']
+    cmd.append(prompt)
+
     env = os.environ.copy()
     env["CODEX_HOME"] = str(home)
 
@@ -229,22 +236,64 @@ def main():
     rollout = latest_rollout(home)
     compactions = parse_rollout(rollout)
     final_calc = (work / "calc.py").read_text(encoding="utf-8")
-    final_card = (work / ".throughline.md").read_text(encoding="utf-8")
     last_summary = compactions[-1]["payload"]["message"] if compactions else ""
+    card_path = work / ".throughline.md"
+    card_checked = card_path.read_text(encoding="utf-8").count("[x]") if card_path.exists() else 0
     result = {
+        "mode": mode,
         "root": str(base),
         "rollout": str(rollout) if rollout else None,
         "compactions": len(compactions),
         "has_objective_lock": "OBJECTIVE LOCK" in last_summary,
         "has_completed_inputs": "COMPLETED INPUTS / DO-NOT-REPEAT" in last_summary,
         "calculator_class": "class Calculator" in final_calc,
-        "card_checked_items": final_card.count("[x]"),
+        "card_checked_items": card_checked,
         "jsonl": str(out),
         "stderr": str(err),
     }
-    print(json.dumps(result, indent=2))
-    if not args.keep and not result["calculator_class"]:
-        print("kept failed trial artifacts for inspection", file=sys.stderr)
+    if not args.keep and result["calculator_class"]:
+        shutil.rmtree(base, ignore_errors=True)
+        result["root"] = "(removed; passed)"
+    return result
+
+
+def _print_compare(results):
+    header = f"{'mode':<12}{'compactions':>13}{'completed':>11}{'completed_inputs':>18}"
+    print(header)
+    print("-" * len(header))
+    for r in results:
+        print(
+            f"{r['mode']:<12}{r['compactions']:>13}"
+            f"{str(r['calculator_class']):>11}{str(r['has_completed_inputs']):>18}"
+        )
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--codex-home", default=os.path.expanduser("~/.codex"))
+    ap.add_argument("--timeout", type=int, default=420)
+    ap.add_argument("--token-limit", type=int, default=40000)
+    ap.add_argument("--notes-lines", type=int, default=2200)
+    ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--baseline", action="store_true", help="run the default-compaction baseline only")
+    ap.add_argument("--compare", action="store_true", help="run baseline then throughline and print an A/B table")
+    ap.add_argument("--strip-service-tier", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--minimal-config", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--reasoning-effort", default="low")
+    args = ap.parse_args()
+
+    if args.compare:
+        modes = ["baseline", "throughline"]
+    elif args.baseline:
+        modes = ["baseline"]
+    else:
+        modes = ["throughline"]
+
+    results = [run_trial(args, mode) for mode in modes]
+    print(json.dumps(results if len(results) > 1 else results[0], indent=2))
+    if len(results) > 1:
+        print()
+        _print_compare(results)
 
 
 if __name__ == "__main__":
