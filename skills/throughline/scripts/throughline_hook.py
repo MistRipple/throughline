@@ -17,6 +17,10 @@ import shutil
 import sys
 
 INJECT_CAP = 9000  # stay under the ~10k additionalContext limit
+SNAPSHOT_NAME = ".throughline.precompact.bak"
+# A healthy card must carry the objective anchor. If the live card lost it (a degraded
+# post-compaction write), we treat the card as corrupted and fall back to the snapshot.
+HEALTH_ANCHOR = "OBJECTIVE"
 
 
 def find_card(start_dir):
@@ -35,6 +39,18 @@ def find_card(start_dir):
             break
         d = parent
     return None
+
+
+def _read(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return None
+
+
+def _healthy(text):
+    return bool(text) and HEALTH_ANCHOR in text
 
 
 def main():
@@ -61,16 +77,27 @@ def main():
     # place so the backup never grows.
     if event_name == "PreCompact":
         try:
-            backup = os.path.join(os.path.dirname(card), ".throughline.precompact.bak")
+            backup = os.path.join(os.path.dirname(card), SNAPSHOT_NAME)
             shutil.copyfile(card, backup)
         except Exception:
             pass
         sys.exit(0)
 
-    try:
-        with open(card, "r", encoding="utf-8") as fh:
-            text = fh.read()
-    except Exception:
+    text = _read(card)
+    restored = False
+    # Recovery: if the live card is missing its objective anchor (degraded during compaction)
+    # but a healthy pre-compaction snapshot exists, restore from it and inject that instead.
+    if not _healthy(text):
+        backup = os.path.join(os.path.dirname(card), SNAPSHOT_NAME)
+        snap = _read(backup)
+        if _healthy(snap):
+            try:
+                shutil.copyfile(backup, card)
+            except Exception:
+                pass
+            text = snap
+            restored = True
+    if not text:
         sys.exit(0)
 
     if len(text) > INJECT_CAP:
@@ -83,6 +110,12 @@ def main():
         "at each milestone.\n\n"
         f"Card: {card}\n\n{text}"
     )
+    if restored:
+        context = (
+            "[throughline] The live card was degraded after compaction and has been "
+            "RESTORED from the pre-compaction snapshot. Trust the OBJECTIVE LOCK and "
+            "PROGRESS below as the source of truth.\n\n" + context
+        )
 
     print(json.dumps({
         "hookSpecificOutput": {

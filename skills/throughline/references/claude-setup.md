@@ -26,6 +26,11 @@ installer wires automatically:
    back into context as `additionalContext`, restoring the objective and progress the summary
    may have dropped.
 
+If the live card itself was degraded during compaction (its `OBJECTIVE` anchor is gone), the
+re-injection hook detects that, restores `.throughline.md` from `.throughline.precompact.bak`,
+and injects it flagged as "RESTORED from the pre-compaction snapshot" so the resumed model
+trusts it over the summary. A healthy live card is never overwritten by the snapshot.
+
 Practical consequence: on Claude the disk card carries more of the load than on Codex, and
 the restore happens *after* the summary rather than *inside* it. Update the card at every
 milestone, especially COMPLETED INPUTS / DO-NOT-REPEAT, so the post-compact re-injection has

@@ -142,6 +142,56 @@ def test_precompact_snapshots_card():
         ok("PreCompact snapshots the card without emitting context")
 
 
+def test_degraded_card_recovers_from_snapshot():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        card.write_text(
+            "# THROUGHLINE\nOBJECTIVE: refactor X into Y\n"
+            "COMPLETED INPUTS / DO-NOT-REPEAT: cat NOTES.md done\n",
+            encoding="utf-8",
+        )
+        # snapshot, then degrade the live card (objective lost)
+        snap_payload = json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"})
+        run([sys.executable, str(HOOK)], input_text=snap_payload)
+        card.write_text("summary: tighten existing code\n", encoding="utf-8")
+
+        payload = json.dumps(
+            {"cwd": str(root), "hook_event_name": "SessionStart", "matcher": "compact"}
+        )
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        if proc.returncode != 0:
+            fail("recovery hook runs", proc.stderr)
+        data = json.loads(proc.stdout)
+        ctx = data["hookSpecificOutput"]["additionalContext"]
+        if "RESTORED from the pre-compaction snapshot" not in ctx:
+            fail("degraded card is flagged as restored", ctx[:200])
+        if "refactor X into Y" not in ctx:
+            fail("objective recovered into injected context", ctx[:200])
+        if "refactor X into Y" not in card.read_text(encoding="utf-8"):
+            fail("live card rewritten from snapshot", card.read_text(encoding="utf-8"))
+        ok("degraded card recovers from pre-compaction snapshot")
+
+
+def test_healthy_card_not_overwritten_by_snapshot():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        card.write_text("# THROUGHLINE\nOBJECTIVE: live and healthy\n", encoding="utf-8")
+        (root / ".throughline.precompact.bak").write_text(
+            "# THROUGHLINE\nOBJECTIVE: stale snapshot\n", encoding="utf-8"
+        )
+        payload = json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"})
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        data = json.loads(proc.stdout)
+        ctx = data["hookSpecificOutput"]["additionalContext"]
+        if "RESTORED" in ctx or "stale snapshot" in ctx:
+            fail("healthy card is never replaced by snapshot", ctx[:200])
+        if "live and healthy" not in ctx:
+            fail("healthy card is injected as-is", ctx[:200])
+        ok("healthy live card is never overwritten by the snapshot")
+
+
 def test_claude_install_includes_precompact():
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
@@ -258,6 +308,8 @@ def main():
     test_hook_resolution()
     test_hook_no_card_is_silent()
     test_precompact_snapshots_card()
+    test_degraded_card_recovers_from_snapshot()
+    test_healthy_card_not_overwritten_by_snapshot()
     test_claude_install_includes_precompact()
     test_installer_idempotent_and_preserves_foreign_hooks()
     test_config_toml_wiring_is_safe()

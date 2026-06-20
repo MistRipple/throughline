@@ -19,6 +19,20 @@ migrations, multi-file edits, investigations, or anything autonomous. Reach for 
 moment a resumed run drifts toward tightening existing behavior instead of doing the asked
 change.
 
+## Operating contract (the agent does this without being reminded)
+Treat the card as a standing obligation for the whole task, not a one-time setup step. The
+user will not prompt you to maintain it; drift happens precisely when no one is watching.
+- Create `.throughline.md` on the first substantive turn of any long/multi-step task, before
+  deep work, copying the objective verbatim.
+- After every milestone and before every compaction-prone pause, update the checklist,
+  COMPLETED INPUTS / DO-NOT-REPEAT, and NEXT ACTION, then save. This is mandatory, not
+  optional polish.
+- On resume or after a compaction, re-read the card first and reconcile it with what the
+  summary claims. If the summary narrowed the objective, the card wins: restore the original
+  objective and continue it.
+- If a turn injects a card marked "RESTORED from the pre-compaction snapshot", trust that
+  card over the surrounding summary.
+
 ## Workflow
 
 ### 1. Create the card (do this first, every long task)
