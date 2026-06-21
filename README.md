@@ -1,5 +1,7 @@
 # throughline
 
+English | [中文](README.zh-CN.md)
+
 Keep a coding agent on its **original objective and concrete progress** across context
 compaction. Works with both **Codex** and **Claude Code**.
 
