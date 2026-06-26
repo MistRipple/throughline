@@ -37,11 +37,17 @@ cd ~/code/throughline
 
 ## 使用
 
-1. 长任务开工时，把[模板](skills/throughline/assets/throughline-card.template.md)复制成仓库根目录的 `.throughline.md`，并把用户诉求**逐字**填进 `OBJECTIVE LOCK`。参见 [examples/refactor.throughline.md](examples/refactor.throughline.md)。
-2. 每个里程碑前重读卡片；完成后更新清单、`COMPLETED INPUTS / DO-NOT-REPEAT` 和 `NEXT ACTION`。
-3. 保持精简：原地覆盖，绝不追加增长，遵守体积预算。
+用 `card.py` 管理卡片：它保证一任务一卡，绝不让已完成的目标渗进下一个任务。
 
-卡片自动定位：hook 从工作目录逐级向上找 `.throughline.md`，也可以用 `$THROUGHLINE_CARD` 指向任意路径。
+1. 开工。这会归档已有卡片，再写一张新卡，并把目标**逐字**存进去：
+   ```bash
+   python3 skills/throughline/scripts/card.py init \
+     --objective "用户诉求，逐字照抄" --task-type feature
+   ```
+2. 推进卡片。每个里程碑前重读，完成后更新清单、`COMPLETED INPUTS / DO-NOT-REPEAT` 和 `NEXT ACTION`。保持精简：原地覆盖，绝不追加增长，遵守体积预算。字段说明见[模板](skills/throughline/assets/throughline-card.template.md)和 [examples/refactor.throughline.md](examples/refactor.throughline.md)。
+3. 收工用 `card.py done`。此后 hook 保持沉默，直到下一次 `init`，已完成的目标不会渗进新任务。若重新捡起任务，用 `card.py reopen` 重新激活。
+
+每次 `init` 都会把上一张卡归档到 `.throughline/archive/`(磁盘卡被 gitignore，归档是它唯一的备份)。卡片自动定位：hook 从工作目录逐级向上找 `.throughline.md`，也可以用 `$THROUGHLINE_CARD` 指向任意路径。
 
 ## 验证
 

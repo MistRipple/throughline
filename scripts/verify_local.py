@@ -315,6 +315,55 @@ def test_card_init_archives_previous_and_resets():
         ok("card init archives the previous card and resets the objective")
 
 
+def test_card_done_reopen_and_template_guard():
+    """done/reopen are inverses, and a drifted template makes init fail without
+    destroying the existing card (which is the only backup that card has)."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        run([sys.executable, str(CARD), "init",
+             "--objective", "Ship the dashboard", "--task-type", "feature"], cwd=str(root))
+
+        proc = run([sys.executable, str(CARD), "done"], cwd=str(root))
+        if proc.returncode != 0 or "status: done" not in card.read_text(encoding="utf-8"):
+            fail("card done sets status: done", proc.stdout + proc.stderr)
+
+        proc = run([sys.executable, str(CARD), "reopen"], cwd=str(root))
+        if proc.returncode != 0 or "status: active" not in card.read_text(encoding="utf-8"):
+            fail("card reopen restores status: active", proc.stdout + proc.stderr)
+        if "status: done" in card.read_text(encoding="utf-8"):
+            fail("reopen leaves no done status behind", card.read_text(encoding="utf-8")[:200])
+
+        # reopen on a pre-status card must insert the field rather than no-op.
+        legacy = root / "legacy.md"
+        legacy.write_text("# THROUGHLINE\nmeta:\n  size_budget_bytes: 8000\n", encoding="utf-8")
+        proc = run([sys.executable, str(CARD), "reopen", "--card", str(legacy)], cwd=str(root))
+        if proc.returncode != 0 or "status: active" not in legacy.read_text(encoding="utf-8"):
+            fail("reopen inserts status into a card that predates the field", proc.stdout + proc.stderr)
+
+        # Template drift: init must fail (exit 2) and must NOT overwrite the live card.
+        before = card.read_text(encoding="utf-8")
+        drift = root / "drift_template.md"
+        drift.write_text("# broken template with no fields\n", encoding="utf-8")
+        # Drive cmd_init directly with a broken TEMPLATE via a tiny shim.
+        shim = root / "shim.py"
+        shim.write_text(
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('card', %r)\n" % str(CARD) +
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "m.TEMPLATE = %r\n" % str(drift) +
+            "class A:\n"
+            "    objective='Drifted objective'; task_type='feature'; task_id=None; card=%r\n" % str(card) +
+            "sys.exit(m.cmd_init(A()))\n",
+            encoding="utf-8")
+        proc = run([sys.executable, str(shim)], cwd=str(root))
+        if proc.returncode != 2:
+            fail("init fails with exit 2 when the template is missing fields", proc.stdout + proc.stderr)
+        if card.read_text(encoding="utf-8") != before:
+            fail("a failed init must not overwrite the existing card", "card was modified")
+        ok("card done/reopen are inverses and template drift fails safely")
+
+
 def test_hook_silent_on_done_and_placeholder_cards():
     """The injector must not feed a stale card into the next task: a done card or an
     unfilled template placeholder both yield no additionalContext."""
@@ -354,6 +403,7 @@ def main():
     test_installer_has_single_codex_entrypoint()
     test_codex_inline_hooks_wiring()
     test_card_init_archives_previous_and_resets()
+    test_card_done_reopen_and_template_guard()
     test_hook_silent_on_done_and_placeholder_cards()
 
 

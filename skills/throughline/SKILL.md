@@ -43,6 +43,7 @@ Use the lifecycle helper so a previous card is archived before the new one is wr
 ```bash
 python3 scripts/card.py init --objective "<verbatim objective>" --task-type feature
 python3 scripts/card.py done    # when the task is complete
+python3 scripts/card.py reopen  # reverse of done, if you resume the task
 ```
 `init` writes `.throughline.md` at the repo root (the hook resolves it by walking up from
 cwd) and moves any existing card to `.throughline/archive/<task_id>_<timestamp>.md`. The
@@ -87,5 +88,5 @@ split to a fresh thread at a milestone, carrying the card forward for a lossless
 - `assets/compact_prompt.md` - Codex `experimental_compact_prompt_file` content.
 - `scripts/throughline_hook.py` - Codex injector; reads the card by cwd, emits additionalContext.
 - `scripts/install.py` - idempotent Codex installer/uninstaller.
-- `scripts/card.py` - card lifecycle: `init` a new task card (archiving the old one) and `done`.
+- `scripts/card.py` - card lifecycle: `init` (archives the old card), `done`, and `reopen`.
 - `references/` - mechanics and Codex setup.

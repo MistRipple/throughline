@@ -13,6 +13,7 @@ no history of it, so this move is the only backup it gets.
 Usage:
   python3 card.py init --objective "..." [--task-type feature] [--task-id slug] [--card PATH]
   python3 card.py done [--card PATH]     # mark the current task complete (hook goes silent)
+  python3 card.py reopen [--card PATH]   # reactivate a done card (reverse of done)
 
 Archive location: <card-dir>/.throughline/archive/<task_id>_<timestamp>.md
 """
@@ -92,7 +93,17 @@ def _fill_template(objective, task_type, task_id):
         (r"(?m)^(TASK TYPE:\s*).*$", task_type),
     ]
     for pat, value in repl:
-        text = re.sub(pat, lambda m, v=value: m.group(1) + v, text, count=1)
+        text, n = re.subn(pat, lambda m, v=value: m.group(1) + v, text, count=1)
+        if n == 0:
+            raise ValueError(
+                f"template {TEMPLATE} is missing a line matching {pat!r}; "
+                "cannot fill the card safely"
+            )
+    # Defense in depth: confirm the verbatim objective actually landed.
+    if _meta_value(text, "OBJECTIVE") != objective:
+        raise ValueError("objective was not written verbatim into the card")
+    if _meta_value(text, "task_id") != task_id:
+        raise ValueError("task_id was not written into the card")
     return text
 
 
@@ -103,12 +114,29 @@ def cmd_init(args):
         print("error: --objective must not be empty", file=sys.stderr)
         return 2
     task_id = args.task_id or _slugify(objective)
+    try:
+        filled = _fill_template(objective, args.task_type, task_id)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     archived = _archive(card)
-    _write(card, _fill_template(objective, args.task_type, task_id))
+    _write(card, filled)
     print(f"[card] created {card} (task_id={task_id})")
     if archived:
         print(f"  archived previous card -> {archived}")
     return 0
+
+
+def _set_status(card, status):
+    """Set meta.status on the card, inserting the field if the card predates it."""
+    text = _read(card)
+    if re.search(r"(?im)^\s*status\s*:", text):
+        text = re.sub(r"(?im)^(\s*status\s*:\s*).*$",
+                      lambda m: m.group(1) + status, text, count=1)
+    else:
+        text = re.sub(r"(?m)^(\s*size_budget_bytes:.*)$",
+                      lambda m: m.group(1) + f"\n  status: {status}", text, count=1)
+    _write(card, text)
 
 
 def cmd_done(args):
@@ -116,13 +144,18 @@ def cmd_done(args):
     if not os.path.isfile(card):
         print(f"error: no card at {card}", file=sys.stderr)
         return 2
-    text = _read(card)
-    if re.search(r"(?im)^\s*status\s*:", text):
-        text = re.sub(r"(?im)^(\s*status\s*:\s*).*$", r"\g<1>done", text, count=1)
-    else:
-        text = re.sub(r"(?m)^(\s*size_budget_bytes:.*)$", r"\g<1>\n  status: done", text, count=1)
-    _write(card, text)
+    _set_status(card, "done")
     print(f"[card] marked done {card} (hook will stay silent until a new task card)")
+    return 0
+
+
+def cmd_reopen(args):
+    card = os.path.abspath(args.card) if args.card else _default_card()
+    if not os.path.isfile(card):
+        print(f"error: no card at {card}", file=sys.stderr)
+        return 2
+    _set_status(card, "active")
+    print(f"[card] reopened {card} (status=active; hook injects this card again)")
     return 0
 
 
@@ -141,6 +174,10 @@ def main(argv=None):
     p_done = sub.add_parser("done", help="mark the current card complete")
     p_done.add_argument("--card", default=None, help="card path; defaults to ./.throughline.md")
     p_done.set_defaults(func=cmd_done)
+
+    p_reopen = sub.add_parser("reopen", help="reactivate a done card (reverse of done)")
+    p_reopen.add_argument("--card", default=None, help="card path; defaults to ./.throughline.md")
+    p_reopen.set_defaults(func=cmd_reopen)
 
     args = ap.parse_args(argv)
     return args.func(args)

@@ -56,16 +56,28 @@ other tools' hooks and your own config keys.
 
 ## Use
 
-1. At the start of a long task, copy
-   [the template](skills/throughline/assets/throughline-card.template.md) to `.throughline.md`
-   at your repo root and fill in `OBJECTIVE LOCK` with the user's request **word-for-word**.
-   See [examples/refactor.throughline.md](examples/refactor.throughline.md).
-2. Re-read the card before each milestone; update the checklist, `COMPLETED INPUTS /
-   DO-NOT-REPEAT`, and `NEXT ACTION` after each.
-3. Keep it bounded: overwrite in place, never append-grow, respect the size budget.
+Manage the card with `card.py`; it keeps one card per task and never lets a finished
+objective leak into the next one.
 
-The card resolves automatically: the hook walks up from the working directory to find
-`.throughline.md`, or you can point `$THROUGHLINE_CARD` at any path.
+1. Start a task. This archives any existing card, then writes a fresh one with your
+   objective stored **word-for-word**:
+   ```bash
+   python3 skills/throughline/scripts/card.py init \
+     --objective "the user's request, verbatim" --task-type feature
+   ```
+2. Work the card. Re-read it before each milestone and update the checklist,
+   `COMPLETED INPUTS / DO-NOT-REPEAT`, and `NEXT ACTION` after each. Keep it bounded:
+   overwrite in place, never append-grow, respect the size budget. See the field layout in
+   [the template](skills/throughline/assets/throughline-card.template.md) and
+   [examples/refactor.throughline.md](examples/refactor.throughline.md).
+3. Finish the task with `card.py done`. The hook then stays silent until the next `init`,
+   so a completed objective never bleeds into new work. Reactivate with `card.py reopen`
+   if you picked the task back up.
+
+The previous card is archived to `.throughline/archive/` on every `init` (the disk card is
+gitignored, so the archive is its only backup). The card resolves automatically: the hook
+walks up from the working directory to find `.throughline.md`, or you can point
+`$THROUGHLINE_CARD` at any path.
 
 ## Verify
 
