@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Idempotent installer for throughline hooks (Codex + Claude Code).
+"""Idempotent installer for throughline Codex hooks.
 
 Wires throughline_hook.py so the objective card is re-injected on manual turns
-and on resume/session start. Compaction-time state-lock is configured
-separately (see references/) because the two tools differ there.
+and on resume/session start. The compaction-time state-lock is installed through
+Codex's experimental_compact_prompt_file.
 
 Usage:
-  python3 install.py [--codex] [--claude] [--print]   # default: both
-  python3 install.py --uninstall [--codex] [--claude]
+  python3 install.py [--print]
+  python3 install.py --uninstall
 
 Re-running is safe: our entries are matched by a stable tag and replaced in place,
 and other tools' hooks are preserved.
@@ -26,7 +26,6 @@ BLOCK_START = "# >>> throughline (managed, do not edit) >>>"
 BLOCK_END = "# <<< throughline <<<"
 
 CODEX_HOME = os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex"))
-CLAUDE_HOME = os.path.expanduser("~/.claude")
 
 # Codex SessionStart has no `compact` matcher; resume is the key one for
 # post-compaction recovery across a restart.
@@ -34,13 +33,6 @@ CODEX_EVENTS = {
     "SessionStart": ["startup", "resume"],
     "UserPromptSubmit": [None],
 }
-CLAUDE_EVENTS = {
-    "SessionStart": ["startup", "resume", "compact"],
-    "UserPromptSubmit": [None],
-}
-# PreCompact has no matcher; the hook snapshots the card before compaction so the
-# objective + DO-NOT-REPEAT survive even if the summary degrades.
-CLAUDE_EVENTS["PreCompact"] = [None]
 
 
 def _cmd():
@@ -127,27 +119,6 @@ def _merge(existing_hooks, ours, remove=False):
         if not hooks[event]:
             del hooks[event]
     return hooks
-
-
-def _first_table_idx(lines):
-    """Index of the first TOML table/array-of-tables header, else len(lines).
-
-    Top-level keys must be inserted before this point; appending after a
-    `[table]` header would silently reparent the key into that table.
-    """
-    for i, ln in enumerate(lines):
-        if ln.lstrip().startswith("["):
-            return i
-    return len(lines)
-
-
-def _toplevel_key_line(lines, key):
-    """Return index of a top-level `key = ...` line, or None."""
-    pat = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
-    for i in range(_first_table_idx(lines)):
-        if pat.match(lines[i]):
-            return i
-    return None
 
 
 def _strip_managed_block(text):
@@ -246,34 +217,17 @@ def install_codex(remove=False):
         print(f"  {line}")
 
 
-def install_claude(remove=False):
-    path = os.path.join(CLAUDE_HOME, "settings.json")
-    data = _load(path)
-    data["hooks"] = _merge(data.get("hooks", {}), _build_matchers(CLAUDE_EVENTS), remove)
-    _save(path, data)
-    print(f"[claude] {'removed' if remove else 'installed'} -> {path}")
-
-
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--codex", action="store_true")
-    ap.add_argument("--claude", action="store_true")
     ap.add_argument("--uninstall", action="store_true")
     ap.add_argument("--print", dest="dry", action="store_true",
                     help="print resulting hook entries, do not write")
     args = ap.parse_args()
 
-    both = not (args.codex or args.claude)
     if args.dry:
-        print(json.dumps({
-            "codex": _build_matchers(CODEX_EVENTS),
-            "claude": _build_matchers(CLAUDE_EVENTS),
-        }, indent=2))
+        print(json.dumps({"codex": _build_matchers(CODEX_EVENTS)}, indent=2))
         return
-    if args.codex or both:
-        install_codex(remove=args.uninstall)
-    if args.claude or both:
-        install_claude(remove=args.uninstall)
+    install_codex(remove=args.uninstall)
 
 
 if __name__ == "__main__":

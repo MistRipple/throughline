@@ -9,6 +9,7 @@ meta:
   created: <YYYY-MM-DD>
   updated: <YYYY-MM-DD HH:MM>
   size_budget_bytes: 8000   # hard cap; trim oldest decisions if exceeded
+  status: active           # active | done. New task = new card (archive the old one).
 
 ## === OBJECTIVE LOCK (verbatim) ===
 <!-- The user's original objective, copied word-for-word. NEVER paraphrase, narrow,

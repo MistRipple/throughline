@@ -2,7 +2,7 @@
 
 ## One command
 ```bash
-python3 /ABSOLUTE/PATH/throughline/skills/throughline/scripts/install.py --codex
+python3 /ABSOLUTE/PATH/throughline/skills/throughline/scripts/install.py
 ```
 This does everything:
 - writes a single managed block to `config.toml`, bounded by
@@ -42,5 +42,5 @@ With a `.throughline.md` in the repo you should see a JSON object containing
 ## Notes
 - Hook event names are PascalCase; handler shape is `{"type":"command","command":"..."}`.
 - `additionalContext` injection is capped near 10 KB; keep the card under its size budget.
-- Uninstall: `python3 .../install.py --uninstall --codex` removes the managed config lines and
+- Uninstall: `python3 .../install.py --uninstall` removes the managed config lines and
   our hook handlers, and preserves other tools' hooks and your own config keys.

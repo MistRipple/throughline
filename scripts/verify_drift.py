@@ -182,7 +182,7 @@ def run_once(args, mode, idx):
     copy_home(Path(args.codex_home), home)
     env = os.environ.copy()
     env["CODEX_HOME"] = str(home)
-    subprocess.run([sys.executable, str(INSTALL), "--codex"], env=env,
+    subprocess.run([sys.executable, str(INSTALL)], env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     build_workspace(work, goal_mode=(mode == "goal"), notes_lines=args.notes_lines)
 

@@ -2,7 +2,7 @@
 """Local verification for the throughline project.
 
 This test suite avoids live model calls. It verifies the deterministic parts that
-must hold before running an expensive Codex/Claude compaction trial.
+must hold before running an expensive Codex compaction trial.
 """
 import json
 import os
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "throughline"
 HOOK = SKILL / "scripts" / "throughline_hook.py"
 INSTALL = SKILL / "scripts" / "install.py"
+CARD = SKILL / "scripts" / "card.py"
 
 
 def ok(name):
@@ -142,222 +143,6 @@ def test_injection_is_token_bounded():
         ok("card injection is token-bounded regardless of card size")
 
 
-def test_precompact_snapshots_card():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        card.write_text(
-            "# THROUGHLINE\nOBJECTIVE: keep original\n"
-            "COMPLETED INPUTS / DO-NOT-REPEAT: cat NOTES.md done\n",
-            encoding="utf-8",
-        )
-        payload = json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"})
-        proc = run([sys.executable, str(HOOK)], input_text=payload)
-        if proc.returncode != 0:
-            fail("PreCompact hook runs", proc.stderr)
-        if proc.stdout.strip():
-            fail("PreCompact emits no additionalContext", proc.stdout)
-        backup = root / ".throughline.precompact.bak"
-        if not backup.is_file():
-            fail("PreCompact writes a snapshot", "no backup file")
-        if backup.read_text(encoding="utf-8") != card.read_text(encoding="utf-8"):
-            fail("PreCompact snapshot matches the card", "content mismatch")
-        ok("PreCompact snapshots the card without emitting context")
-
-
-def test_degraded_card_recovers_from_snapshot():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        card.write_text(
-            "# THROUGHLINE\nOBJECTIVE: refactor X into Y\n"
-            "COMPLETED INPUTS / DO-NOT-REPEAT: cat NOTES.md done\n",
-            encoding="utf-8",
-        )
-        # snapshot, then degrade the live card (objective lost)
-        snap_payload = json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"})
-        run([sys.executable, str(HOOK)], input_text=snap_payload)
-        card.write_text("summary: tighten existing code\n", encoding="utf-8")
-
-        payload = json.dumps(
-            {"cwd": str(root), "hook_event_name": "SessionStart", "matcher": "compact"}
-        )
-        proc = run([sys.executable, str(HOOK)], input_text=payload)
-        if proc.returncode != 0:
-            fail("recovery hook runs", proc.stderr)
-        data = json.loads(proc.stdout)
-        ctx = data["hookSpecificOutput"]["additionalContext"]
-        if "RESTORED from the pre-compaction snapshot" not in ctx:
-            fail("degraded card is flagged as restored", ctx[:200])
-        if "refactor X into Y" not in ctx:
-            fail("objective recovered into injected context", ctx[:200])
-        if "refactor X into Y" not in card.read_text(encoding="utf-8"):
-            fail("live card rewritten from snapshot", card.read_text(encoding="utf-8"))
-        ok("degraded card recovers from pre-compaction snapshot")
-
-
-def test_healthy_card_not_overwritten_by_snapshot():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        card.write_text("# THROUGHLINE\nOBJECTIVE: live and healthy\n", encoding="utf-8")
-        (root / ".throughline.precompact.bak").write_text(
-            "# THROUGHLINE\nOBJECTIVE: stale snapshot\n", encoding="utf-8"
-        )
-        payload = json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"})
-        proc = run([sys.executable, str(HOOK)], input_text=payload)
-        data = json.loads(proc.stdout)
-        ctx = data["hookSpecificOutput"]["additionalContext"]
-        if "RESTORED" in ctx or "stale snapshot" in ctx:
-            fail("healthy card is never replaced by snapshot", ctx[:200])
-        if "live and healthy" not in ctx:
-            fail("healthy card is injected as-is", ctx[:200])
-        ok("healthy live card is never overwritten by the snapshot")
-
-
-def test_narrowed_card_triggers_restore():
-    """The exact drift case: a card narrowed to 'harden existing code' must be treated
-    as degraded and restored from the snapshot, not accepted as healthy."""
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        card.write_text(
-            "# THROUGHLINE\nOBJECTIVE: Refactor calc.py into a Calculator class\n", encoding="utf-8"
-        )
-        run([sys.executable, str(HOOK)],
-            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
-        # objective collapses to the narrowed form
-        card.write_text("OBJECTIVE: harden the existing code\n", encoding="utf-8")
-        proc = run([sys.executable, str(HOOK)],
-                   input_text=json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"}))
-        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-        if "Refactor calc.py into a Calculator class" not in ctx:
-            fail("narrowed card is restored to original objective", ctx[:200])
-        if "RESTORED" not in ctx:
-            fail("narrowed card restore is flagged", ctx[:200])
-        ok("narrowed objective triggers restore from snapshot")
-
-
-def test_placeholder_card_triggers_restore():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        card.write_text("# THROUGHLINE\nOBJECTIVE: real built feature\n", encoding="utf-8")
-        run([sys.executable, str(HOOK)],
-            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
-        # card reset to unfilled template placeholder
-        card.write_text("OBJECTIVE: <verbatim original objective>\n", encoding="utf-8")
-        proc = run([sys.executable, str(HOOK)],
-                   input_text=json.dumps({"cwd": str(root), "hook_event_name": "UserPromptSubmit"}))
-        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-        if "real built feature" not in ctx:
-            fail("placeholder card is restored from snapshot", ctx[:200])
-        ok("placeholder objective triggers restore from snapshot")
-
-
-def test_degraded_card_cannot_poison_snapshot():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        card = root / ".throughline.md"
-        snap = root / ".throughline.precompact.bak"
-        card.write_text("# THROUGHLINE\nOBJECTIVE: build feature Z end to end\n", encoding="utf-8")
-        run([sys.executable, str(HOOK)],
-            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
-        card.write_text("OBJECTIVE: harden the existing code\n", encoding="utf-8")
-        # second PreCompact with a degraded card must NOT overwrite the good snapshot
-        run([sys.executable, str(HOOK)],
-            input_text=json.dumps({"cwd": str(root), "hook_event_name": "PreCompact"}))
-        if "build feature Z end to end" not in snap.read_text(encoding="utf-8"):
-            fail("degraded card poisoned the snapshot", snap.read_text(encoding="utf-8"))
-        ok("degraded card cannot overwrite a healthy snapshot")
-
-
-def test_narrow_detection_matrix():
-    """Narrowing detection must catch real drift without false-positiving on
-    legitimate builds that merely mention a word like 'validate' or 'existing'."""
-    spec = importlib.util.spec_from_file_location("tl_hook", str(HOOK))
-    h = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(h)
-    healthy_ok = [
-        "Refactor to validate inputs against the new schema",
-        "Build a validation service for the existing API",
-        "Refactor calc.py into a Calculator class",
-        "Migrate the existing auth module to OAuth2",
-        "Build a hardening dashboard feature for users",
-    ]
-    degraded = [
-        "harden the existing code",
-        "Harden the existing parser",
-        "Clean up the current module",
-        "tighten existing behavior and validate current code",
-        "just stabilize the existing implementation",
-        "clean up the code",
-    ]
-    for obj in healthy_ok:
-        if not h._healthy("OBJECTIVE: " + obj):
-            fail("legitimate build stays healthy", obj)
-    for obj in degraded:
-        if h._healthy("OBJECTIVE: " + obj):
-            fail("narrowed objective is detected as degraded", obj)
-    ok("narrow detection catches drift without false-positiving on real builds")
-
-
-def test_claude_install_includes_precompact():
-    with tempfile.TemporaryDirectory() as td:
-        home = Path(td)
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-        proc = run([sys.executable, str(INSTALL), "--claude"], env=env)
-        if proc.returncode != 0:
-            fail("claude install runs", proc.stderr)
-        settings = json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        events = settings["hooks"]
-        for needed in ("PreCompact", "SessionStart", "UserPromptSubmit"):
-            if needed not in events:
-                fail("claude install wires PreCompact + compact recovery", f"missing {needed}")
-        sess_matchers = {e.get("matcher") for e in events["SessionStart"]}
-        if "compact" not in sess_matchers:
-            fail("claude SessionStart includes compact matcher", str(sess_matchers))
-        ok("claude install wires PreCompact snapshot and post-compact re-injection")
-
-
-def test_claude_installer_idempotent_and_preserves_foreign_hooks():
-    with tempfile.TemporaryDirectory() as td:
-        home = Path(td)
-        settings = home / ".claude" / "settings.json"
-        settings.parent.mkdir(parents=True)
-        settings.write_text(
-            json.dumps({"hooks": {"Stop": [
-                {"hooks": [{"type": "command", "command": "echo foreign"}]}]}}),
-            encoding="utf-8",
-        )
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-
-        for _ in range(3):
-            proc = run([sys.executable, str(INSTALL), "--claude"], env=env)
-            if proc.returncode != 0:
-                fail("claude installer runs", proc.stderr)
-        data = json.loads(settings.read_text(encoding="utf-8"))
-        if len(data["hooks"]["SessionStart"]) != 3:  # startup/resume/compact
-            fail("claude install idempotent for SessionStart", json.dumps(data, indent=2))
-        if len(data["hooks"]["UserPromptSubmit"]) != 1:
-            fail("claude install idempotent for UserPromptSubmit", json.dumps(data, indent=2))
-        if "Stop" not in data["hooks"]:
-            fail("claude install preserves foreign hooks", json.dumps(data, indent=2))
-        ok("claude installer is idempotent and preserves foreign hooks")
-
-        proc = run([sys.executable, str(INSTALL), "--uninstall", "--claude"], env=env)
-        if proc.returncode != 0:
-            fail("claude uninstaller runs", proc.stderr)
-        data = json.loads(settings.read_text(encoding="utf-8"))
-        if "SessionStart" in data["hooks"] or "PreCompact" in data["hooks"]:
-            fail("claude uninstaller removes throughline hooks", json.dumps(data, indent=2))
-        if "Stop" not in data["hooks"]:
-            fail("claude uninstaller preserves foreign hooks", json.dumps(data, indent=2))
-        ok("claude uninstaller removes throughline hooks and preserves foreign hooks")
-
-
 def test_codex_install_cleans_legacy_hooks_json():
     """Older installs left a hooks.json + a rejected string key. The new Codex
     install must remove our entries from a stray hooks.json (preserving foreign)."""
@@ -375,7 +160,7 @@ def test_codex_install_cleans_legacy_hooks_json():
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["CODEX_HOME"] = str(codex_home)
-        proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
+        proc = run([sys.executable, str(INSTALL)], env=env)
         if proc.returncode != 0:
             fail("codex install runs with legacy hooks.json", proc.stderr)
         data = json.loads(legacy.read_text(encoding="utf-8"))
@@ -384,6 +169,30 @@ def test_codex_install_cleans_legacy_hooks_json():
         if "Stop" not in data.get("hooks", {}):
             fail("foreign entries preserved in legacy hooks.json", json.dumps(data))
         ok("codex install cleans legacy throughline hooks.json and keeps foreign hooks")
+
+
+def test_installer_has_single_codex_entrypoint():
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        codex_home = home / ".codex"
+        codex_home.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["CODEX_HOME"] = str(codex_home)
+
+        proc = run([sys.executable, str(INSTALL), "--print"], env=env)
+        if proc.returncode != 0:
+            fail("installer --print succeeds", proc.stderr)
+        data = json.loads(proc.stdout)
+        if sorted(data.keys()) != ["codex"]:
+            fail("installer --print exposes only the Codex path", proc.stdout)
+        ok("installer --print exposes only the Codex path")
+
+        for flag in ("--codex", "--claude"):
+            proc = run([sys.executable, str(INSTALL), flag], env=env)
+            if proc.returncode == 0:
+                fail(f"installer rejects removed flag {flag}", proc.stdout)
+        ok("installer rejects removed Codex/Claude compatibility flags")
 
 
 def _parse_toml(text):
@@ -415,7 +224,7 @@ def test_codex_inline_hooks_wiring():
         env["CODEX_HOME"] = str(codex_home)
 
         for _ in range(3):
-            proc = run([sys.executable, str(INSTALL), "--codex"], env=env)
+            proc = run([sys.executable, str(INSTALL)], env=env)
             if proc.returncode != 0:
                 fail("inline hooks install runs", proc.stderr)
         text = cfg.read_text(encoding="utf-8")
@@ -447,7 +256,7 @@ def test_codex_inline_hooks_wiring():
                 fail("user config preserved through inline-hooks install", str(parsed.keys()))
         ok("codex inline hooks block is valid, idempotent, and parseable")
 
-        proc = run([sys.executable, str(INSTALL), "--uninstall", "--codex"], env=env)
+        proc = run([sys.executable, str(INSTALL), "--uninstall"], env=env)
         if proc.returncode != 0:
             fail("inline hooks uninstall runs", proc.stderr)
         text = cfg.read_text(encoding="utf-8")
@@ -461,23 +270,91 @@ def test_codex_inline_hooks_wiring():
         ok("codex uninstall removes the block and leaves a valid config")
 
 
+def test_card_init_archives_previous_and_resets():
+    """A new task gets a new card; the previous card must be archived (its only backup,
+    since the disk card is gitignored), and the new card carries the new objective."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        proc = run([sys.executable, str(CARD), "init",
+                    "--objective", "Build a NEW email notification feature",
+                    "--task-type", "feature"], cwd=str(root))
+        if proc.returncode != 0:
+            fail("card init creates a first card", proc.stderr)
+        first = card.read_text(encoding="utf-8")
+        if "OBJECTIVE: Build a NEW email notification feature" not in first:
+            fail("first card carries the verbatim objective", first[:200])
+        if "status: active" not in first:
+            fail("new card is marked active", first[:200])
+
+        proc = run([sys.executable, str(CARD), "init",
+                    "--objective", "Add OAuth2 login", "--task-type", "feature"], cwd=str(root))
+        if proc.returncode != 0:
+            fail("card init creates a second card", proc.stderr)
+        second = card.read_text(encoding="utf-8")
+        if "OBJECTIVE: Add OAuth2 login" not in second:
+            fail("second card carries the new objective", second[:200])
+        if "email notification" in second:
+            fail("new card does not inherit the previous objective", second[:200])
+
+        archive = root / ".throughline" / "archive"
+        backups = list(archive.glob("*.md"))
+        if len(backups) != 1:
+            fail("previous card is archived exactly once", str(backups))
+        if "Build a NEW email notification feature" not in backups[0].read_text(encoding="utf-8"):
+            fail("archived card preserves the previous objective", backups[0].name)
+
+        # Objective text is written verbatim: regex-y values must not be read as backreferences.
+        tricky = r"Fix \\g<bug> and \\1 in C:\\path"
+        proc = run([sys.executable, str(CARD), "init",
+                    "--objective", tricky, "--task-type", "bugfix"], cwd=str(root))
+        if proc.returncode != 0:
+            fail("card init handles regex metacharacters in the objective", proc.stderr)
+        if tricky not in card.read_text(encoding="utf-8"):
+            fail("objective with backreference-like text is stored verbatim", card.read_text(encoding="utf-8")[:200])
+        ok("card init archives the previous card and resets the objective")
+
+
+def test_hook_silent_on_done_and_placeholder_cards():
+    """The injector must not feed a stale card into the next task: a done card or an
+    unfilled template placeholder both yield no additionalContext."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+        payload = json.dumps({"cwd": str(root), "hookEventName": "UserPromptSubmit"})
+
+        card.write_text("# THROUGHLINE\nmeta:\n  status: done\nOBJECTIVE: shipped feature\n",
+                        encoding="utf-8")
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        if proc.returncode != 0 or proc.stdout.strip():
+            fail("hook is silent for a done card", proc.stdout + proc.stderr)
+
+        card.write_text("# THROUGHLINE\nOBJECTIVE: <verbatim original objective>\n",
+                        encoding="utf-8")
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        if proc.returncode != 0 or proc.stdout.strip():
+            fail("hook is silent for an unfilled placeholder card", proc.stdout + proc.stderr)
+
+        card.write_text("# THROUGHLINE\nmeta:\n  status: active\nOBJECTIVE: real live goal\n",
+                        encoding="utf-8")
+        proc = run([sys.executable, str(HOOK)], input_text=payload)
+        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        if "real live goal" not in ctx:
+            fail("hook still injects an active, filled card", proc.stdout)
+        ok("hook stays silent for done/placeholder cards and injects active ones")
+
+
 def main():
     test_prompt_contract()
     test_card_contract()
     test_hook_resolution()
     test_hook_no_card_is_silent()
     test_injection_is_token_bounded()
-    test_precompact_snapshots_card()
-    test_degraded_card_recovers_from_snapshot()
-    test_healthy_card_not_overwritten_by_snapshot()
-    test_narrowed_card_triggers_restore()
-    test_placeholder_card_triggers_restore()
-    test_degraded_card_cannot_poison_snapshot()
-    test_narrow_detection_matrix()
-    test_claude_install_includes_precompact()
-    test_claude_installer_idempotent_and_preserves_foreign_hooks()
     test_codex_install_cleans_legacy_hooks_json()
+    test_installer_has_single_codex_entrypoint()
     test_codex_inline_hooks_wiring()
+    test_card_init_archives_previous_and_resets()
+    test_hook_silent_on_done_and_placeholder_cards()
 
 
 if __name__ == "__main__":
