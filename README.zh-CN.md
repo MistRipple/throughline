@@ -39,15 +39,42 @@ cd ~/code/throughline
 
 用 `card.py` 管理卡片：它保证一任务一卡，绝不让已完成的目标渗进下一个任务。
 
-1. 开工。这会归档已有卡片，再写一张新卡，并把目标**逐字**存进去：
+1. 用 `new` 开工。这会归档已有卡片，再写一张新卡，并把目标**逐字**存进去：
    ```bash
-   python3 skills/throughline/scripts/card.py init \
+   python3 skills/throughline/scripts/card.py new \
      --objective "用户诉求，逐字照抄" --task-type feature
    ```
 2. 推进卡片。每个里程碑前重读，完成后更新清单、`COMPLETED INPUTS / DO-NOT-REPEAT` 和 `NEXT ACTION`。保持精简：原地覆盖，绝不追加增长，遵守体积预算。字段说明见[模板](skills/throughline/assets/throughline-card.template.md)和 [examples/refactor.throughline.md](examples/refactor.throughline.md)。
-3. 收工用 `card.py done`。此后 hook 保持沉默，直到下一次 `init`，已完成的目标不会渗进新任务。若重新捡起任务，用 `card.py reopen` 重新激活。
+3. 收工用 `card.py done`。此后 hook 保持沉默，直到下一次 `new`，已完成的目标不会渗进新任务。重新捡起同一个任务时用 `card.py resume`，它沿用当前卡片，若已 done 则重新激活。两个动词把意图分得很干净:`new` 开启新目标线并归档旧卡,`resume` 沿用当前线且从不归档(`init`/`reopen` 保留为别名)。
 
-每次 `init` 都会把上一张卡归档到 `.throughline/archive/`(磁盘卡被 gitignore，归档是它唯一的备份)。卡片自动定位：hook 从工作目录逐级向上找 `.throughline.md`，也可以用 `$THROUGHLINE_CARD` 指向任意路径。
+每次 `new` 都会把上一张卡归档到 `.throughline/archive/`(磁盘卡被 gitignore，归档是它唯一的备份)。卡片自动定位：hook 从工作目录逐级向上找 `.throughline.md`，也可以用 `$THROUGHLINE_CARD` 指向任意路径。
+
+## 模式
+
+同样三层机制，对应三种用法。你可以只用其中一层，也可以全开；它们彼此叠加。
+
+**被动注入(装一次就不用管)。** 跑完 `./install.sh` 后，hook 会在每次手动发消息、以及
+`SessionStart` 启动/恢复时触发，把 `.throughline.md` 重新喂进上下文。你什么都不用敲。这是默认
+工作模式，前提只有一个：得先有一张卡。
+
+**主动管卡(你真正操作的动词)。** 这是你驱动这个 skill 的地方，靠 `card.py`：
+
+- `card.py new --objective "..."` 开新任务并归档旧卡。目标变了就用它。
+- `card.py resume` 回到同一个任务，若卡已 done 则重新激活。中断或重启后用它，它从不归档。
+- `card.py done` 收工；此后 hook 保持沉默，直到下一次 `new`。
+- `card.py check` 在卡片超出体积或分区预算时告警。
+
+**压缩摘要锁(唯一能扛进程内压缩的一层)。** 安装还会设置 `experimental_compact_prompt_file`，
+让每份压缩摘要都以 `OBJECTIVE LOCK`、`PROGRESS CHECKLIST`、`COMPLETED INPUTS / DO-NOT-REPEAT`、
+`NEXT ACTION` 开头。hook 在进程内压缩时不会触发，而这一层正好补上那个缺口。
+
+常见搭配：
+
+- **三层全开(默认)。** 装好后，开工 `new`、收工 `done`、回来 `resume`，其余全自动。
+- **只要注入、不要摘要锁。** 如果你已经设了自己的 `experimental_compact_prompt_file`，安装器会
+  保留它、只接 hook，这一层在你删掉自己的键之前不激活。
+- **只用卡、不装 hook。** 跳过安装，把 `card.py` 当手动目标账本用。这样会失去自动注入和压缩保护，
+  属于兜底方案，不是推荐路径。
 
 ## 验证
 

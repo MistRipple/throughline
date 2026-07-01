@@ -59,10 +59,10 @@ other tools' hooks and your own config keys.
 Manage the card with `card.py`; it keeps one card per task and never lets a finished
 objective leak into the next one.
 
-1. Start a task. This archives any existing card, then writes a fresh one with your
-   objective stored **word-for-word**:
+1. Start a task with `new`. This archives any existing card, then writes a fresh one
+   with your objective stored **word-for-word**:
    ```bash
-   python3 skills/throughline/scripts/card.py init \
+   python3 skills/throughline/scripts/card.py new \
      --objective "the user's request, verbatim" --task-type feature
    ```
 2. Work the card. Re-read it before each milestone and update the checklist,
@@ -70,14 +70,52 @@ objective leak into the next one.
    overwrite in place, never append-grow, respect the size budget. See the field layout in
    [the template](skills/throughline/assets/throughline-card.template.md) and
    [examples/refactor.throughline.md](examples/refactor.throughline.md).
-3. Finish the task with `card.py done`. The hook then stays silent until the next `init`,
-   so a completed objective never bleeds into new work. Reactivate with `card.py reopen`
-   if you picked the task back up.
+3. Finish the task with `card.py done`. The hook then stays silent until the next `new`,
+   so a completed objective never bleeds into new work. Come back to the same task with
+   `card.py resume`, which keeps the current card and reactivates it if it was done.
+   Two verbs split the intent cleanly: `new` opens a fresh objective line and archives
+   the old one, `resume` keeps the current line and never archives. (`init`/`reopen`
+   remain as aliases.)
 
-The previous card is archived to `.throughline/archive/` on every `init` (the disk card is
+The previous card is archived to `.throughline/archive/` on every `new` (the disk card is
 gitignored, so the archive is its only backup). The card resolves automatically: the hook
 walks up from the working directory to find `.throughline.md`, or you can point
 `$THROUGHLINE_CARD` at any path.
+
+## Modes
+
+The same three layers give you three ways to use throughline. Pick a layer or run all of
+them; they compose.
+
+**Passive injection (install once, then ignore).** After `./install.sh`, the hook fires on
+every manual turn and on `SessionStart` startup/resume, re-feeding `.throughline.md` into
+context. You type nothing. This is the default working mode; it just needs a card to exist.
+
+**Active card management (the verbs you actually run).** This is where you drive the skill,
+through `card.py`:
+
+- `card.py new --objective "..."` opens a new task and archives the old card. Use it when the
+  goal changes.
+- `card.py resume` returns to the same task and reactivates the card if it was done. Use it
+  after an interruption or a restart. It never archives.
+- `card.py done` finishes the task; the hook then stays silent until the next `new`.
+- `card.py check` warns when the card exceeds its size or section budget.
+
+**Compaction summary-lock (the only layer that survives in-process compaction).** The install
+also sets `experimental_compact_prompt_file`, so every compaction summary begins with
+`OBJECTIVE LOCK`, `PROGRESS CHECKLIST`, `COMPLETED INPUTS / DO-NOT-REPEAT`, and `NEXT ACTION`.
+The hook cannot fire during in-process compaction, which is exactly the gap this layer fills.
+
+Common combinations:
+
+- **All three (default).** Install, then `new` at the start, `done` at the end, `resume` when
+  you come back. Everything else is automatic.
+- **Injection without the summary-lock.** If you already set your own
+  `experimental_compact_prompt_file`, the installer keeps it and only wires the hook, so this
+  layer stays off until you remove your key.
+- **Cards only, no hook.** Skip the install and use `card.py` as a manual objective ledger.
+  You lose automatic injection and compaction protection, so this is a fallback, not the
+  recommended path.
 
 ## Verify
 
