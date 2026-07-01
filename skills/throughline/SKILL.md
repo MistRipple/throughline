@@ -39,14 +39,19 @@ user will not prompt you to maintain it; drift happens precisely when no one is 
 ## Workflow
 
 ### 1. Create the card (do this first, every long task)
-Use the lifecycle helper so a previous card is archived before the new one is written:
+Two verbs carry the intent: `new` opens a fresh objective line (archiving any existing
+card), and `resume` keeps working the current one. No flag or prompt is needed to pick.
 ```bash
-python3 scripts/card.py init --objective "<verbatim objective>" --task-type feature
-python3 scripts/card.py done    # when the task is complete
-python3 scripts/card.py reopen  # reverse of done, if you resume the task
+python3 scripts/card.py new --objective "<verbatim objective>" --task-type feature
+python3 scripts/card.py check    # warn if the card is over budget (add --strict to gate CI)
+python3 scripts/card.py done     # when the task is complete
+python3 scripts/card.py resume   # keep the current task (reactivates it if done)
+# aliases: `init` == `new`, `reopen` == `resume`
 ```
-`init` writes `.throughline.md` at the repo root (the hook resolves it by walking up from
-cwd) and moves any existing card to `.throughline/archive/<task_id>_<timestamp>.md`. The
+`new` writes `.throughline.md` at the git root, resolving it the same way the hook does:
+walk up from cwd, reuse an existing card if found, otherwise anchor at the repo root (falling
+back to cwd when there is no git repo). It moves any existing card to
+`.throughline/archive/<task_id>_<timestamp>.md`. The
 disk card is gitignored, so this archive is its only backup. You can still copy
 [assets/throughline-card.template.md](assets/throughline-card.template.md) by hand; if the
 repo keeps progress docs elsewhere, point `THROUGHLINE_CARD` at that path.
@@ -59,7 +64,9 @@ repeated, and the next action.
 Overwrite in place; never append-grow. Respect the size budget in the template header:
 milestones not micro-steps, completed-inputs capped at the last 12 useful facts, decisions
 log capped at the last 10 lines, objective stored once.
-A bloated card is just another context leak.
+A bloated card is just another context leak. Run `python3 scripts/card.py check` to have the
+size budget and section caps enforced instead of merely documented; `--strict` exits non-zero
+when a limit is exceeded so you can wire it into CI or a pre-commit step.
 
 ### 3. Work the card at every milestone
 Before starting a milestone, re-read the card. After finishing one, update the checklist,
@@ -88,5 +95,5 @@ split to a fresh thread at a milestone, carrying the card forward for a lossless
 - `assets/compact_prompt.md` - Codex `experimental_compact_prompt_file` content.
 - `scripts/throughline_hook.py` - Codex injector; reads the card by cwd, emits additionalContext.
 - `scripts/install.py` - idempotent Codex installer/uninstaller.
-- `scripts/card.py` - card lifecycle: `init` (archives the old card), `done`, and `reopen`.
+- `scripts/card.py` - card lifecycle: `new` (opens a fresh line, archiving the old card), `resume` (keeps the current line), `check` (enforces size/section budgets), and `done`. `init`/`reopen` are aliases for `new`/`resume`.
 - `references/` - mechanics and Codex setup.

@@ -270,27 +270,29 @@ def test_codex_inline_hooks_wiring():
         ok("codex uninstall removes the block and leaves a valid config")
 
 
-def test_card_init_archives_previous_and_resets():
-    """A new task gets a new card; the previous card must be archived (its only backup,
-    since the disk card is gitignored), and the new card carries the new objective."""
+def test_card_new_archives_previous_and_resets():
+    """`new` opens a fresh objective line and unconditionally archives the previous
+    card (its only backup, since the disk card is gitignored). The new card carries
+    the new objective and never inherits the old one. `init` is a plain alias."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         card = root / ".throughline.md"
-        proc = run([sys.executable, str(CARD), "init",
+        proc = run([sys.executable, str(CARD), "new",
                     "--objective", "Build a NEW email notification feature",
                     "--task-type", "feature"], cwd=str(root))
         if proc.returncode != 0:
-            fail("card init creates a first card", proc.stderr)
+            fail("card new creates a first card", proc.stderr)
         first = card.read_text(encoding="utf-8")
         if "OBJECTIVE: Build a NEW email notification feature" not in first:
             fail("first card carries the verbatim objective", first[:200])
         if "status: active" not in first:
             fail("new card is marked active", first[:200])
 
-        proc = run([sys.executable, str(CARD), "init",
+        # `new` over an ACTIVE card just archives it - no flag, no prompt, no refusal.
+        proc = run([sys.executable, str(CARD), "new",
                     "--objective", "Add OAuth2 login", "--task-type", "feature"], cwd=str(root))
         if proc.returncode != 0:
-            fail("card init creates a second card", proc.stderr)
+            fail("card new replaces an active card without a flag", proc.stderr)
         second = card.read_text(encoding="utf-8")
         if "OBJECTIVE: Add OAuth2 login" not in second:
             fail("second card carries the new objective", second[:200])
@@ -304,48 +306,71 @@ def test_card_init_archives_previous_and_resets():
         if "Build a NEW email notification feature" not in backups[0].read_text(encoding="utf-8"):
             fail("archived card preserves the previous objective", backups[0].name)
 
+        # `init` alias behaves identically to `new`.
+        proc = run([sys.executable, str(CARD), "init",
+                    "--objective", "Via the init alias", "--task-type", "feature"], cwd=str(root))
+        if proc.returncode != 0 or "OBJECTIVE: Via the init alias" not in card.read_text(encoding="utf-8"):
+            fail("init alias maps to new", proc.stdout + proc.stderr)
+
         # Objective text is written verbatim: regex-y values must not be read as backreferences.
         tricky = r"Fix \\g<bug> and \\1 in C:\\path"
-        proc = run([sys.executable, str(CARD), "init",
+        proc = run([sys.executable, str(CARD), "new",
                     "--objective", tricky, "--task-type", "bugfix"], cwd=str(root))
         if proc.returncode != 0:
-            fail("card init handles regex metacharacters in the objective", proc.stderr)
+            fail("card new handles regex metacharacters in the objective", proc.stderr)
         if tricky not in card.read_text(encoding="utf-8"):
             fail("objective with backreference-like text is stored verbatim", card.read_text(encoding="utf-8")[:200])
-        ok("card init archives the previous card and resets the objective")
+        ok("card new archives the previous card and resets the objective")
 
 
-def test_card_done_reopen_and_template_guard():
-    """done/reopen are inverses, and a drifted template makes init fail without
-    destroying the existing card (which is the only backup that card has)."""
+def test_card_done_resume_and_template_guard():
+    """done and resume are inverses on a real objective, resume never archives, and a
+    drifted template makes `new` fail (exit 2) without destroying the existing card
+    (its only backup). `reopen` is a plain alias for `resume`."""
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         card = root / ".throughline.md"
-        run([sys.executable, str(CARD), "init",
+        run([sys.executable, str(CARD), "new",
              "--objective", "Ship the dashboard", "--task-type", "feature"], cwd=str(root))
 
         proc = run([sys.executable, str(CARD), "done"], cwd=str(root))
         if proc.returncode != 0 or "status: done" not in card.read_text(encoding="utf-8"):
             fail("card done sets status: done", proc.stdout + proc.stderr)
 
+        # resume reactivates a done card and never archives it.
+        before_archive = list((root / ".throughline" / "archive").glob("*.md"))
+        proc = run([sys.executable, str(CARD), "resume"], cwd=str(root))
+        if proc.returncode != 0 or "status: active" not in card.read_text(encoding="utf-8"):
+            fail("card resume reactivates a done card", proc.stdout + proc.stderr)
+        if "status: done" in card.read_text(encoding="utf-8"):
+            fail("resume leaves no done status behind", card.read_text(encoding="utf-8")[:200])
+        if list((root / ".throughline" / "archive").glob("*.md")) != before_archive:
+            fail("resume must not archive the current card", "archive changed on resume")
+
+        # resume on an already-active card is a confirming no-op (still exit 0, unchanged).
+        snapshot = card.read_text(encoding="utf-8")
+        proc = run([sys.executable, str(CARD), "resume"], cwd=str(root))
+        if proc.returncode != 0 or card.read_text(encoding="utf-8") != snapshot:
+            fail("resume on an active card is a no-op", proc.stdout + proc.stderr)
+
+        # resume refuses a card with no real objective - there is nothing to resume.
+        placeholder = root / "placeholder.md"
+        placeholder.write_text("OBJECTIVE: <objective>\nstatus: active\n", encoding="utf-8")
+        proc = run([sys.executable, str(CARD), "resume", "--card", str(placeholder)], cwd=str(root))
+        if proc.returncode != 2:
+            fail("resume refuses a placeholder card (nothing to resume)", proc.stdout + proc.stderr)
+
+        # `reopen` alias reactivates a done card just like resume.
+        run([sys.executable, str(CARD), "done"], cwd=str(root))
         proc = run([sys.executable, str(CARD), "reopen"], cwd=str(root))
         if proc.returncode != 0 or "status: active" not in card.read_text(encoding="utf-8"):
-            fail("card reopen restores status: active", proc.stdout + proc.stderr)
-        if "status: done" in card.read_text(encoding="utf-8"):
-            fail("reopen leaves no done status behind", card.read_text(encoding="utf-8")[:200])
+            fail("reopen alias maps to resume", proc.stdout + proc.stderr)
 
-        # reopen on a pre-status card must insert the field rather than no-op.
-        legacy = root / "legacy.md"
-        legacy.write_text("# THROUGHLINE\nmeta:\n  size_budget_bytes: 8000\n", encoding="utf-8")
-        proc = run([sys.executable, str(CARD), "reopen", "--card", str(legacy)], cwd=str(root))
-        if proc.returncode != 0 or "status: active" not in legacy.read_text(encoding="utf-8"):
-            fail("reopen inserts status into a card that predates the field", proc.stdout + proc.stderr)
-
-        # Template drift: init must fail (exit 2) and must NOT overwrite the live card.
+        # Template drift: `new` must fail (exit 2) and must NOT overwrite the live card.
         before = card.read_text(encoding="utf-8")
         drift = root / "drift_template.md"
         drift.write_text("# broken template with no fields\n", encoding="utf-8")
-        # Drive cmd_init directly with a broken TEMPLATE via a tiny shim.
+        # Drive cmd_new directly with a broken TEMPLATE via a tiny shim.
         shim = root / "shim.py"
         shim.write_text(
             "import importlib.util, sys\n"
@@ -354,14 +379,14 @@ def test_card_done_reopen_and_template_guard():
             "m.TEMPLATE = %r\n" % str(drift) +
             "class A:\n"
             "    objective='Drifted objective'; task_type='feature'; task_id=None; card=%r\n" % str(card) +
-            "sys.exit(m.cmd_init(A()))\n",
+            "sys.exit(m.cmd_new(A()))\n",
             encoding="utf-8")
         proc = run([sys.executable, str(shim)], cwd=str(root))
         if proc.returncode != 2:
-            fail("init fails with exit 2 when the template is missing fields", proc.stdout + proc.stderr)
+            fail("new fails with exit 2 when the template is missing fields", proc.stdout + proc.stderr)
         if card.read_text(encoding="utf-8") != before:
-            fail("a failed init must not overwrite the existing card", "card was modified")
-        ok("card done/reopen are inverses and template drift fails safely")
+            fail("a failed new must not overwrite the existing card", "card was modified")
+        ok("card done/resume are inverses and template drift fails safely")
 
 
 def test_hook_silent_on_done_and_placeholder_cards():
@@ -393,6 +418,142 @@ def test_hook_silent_on_done_and_placeholder_cards():
         ok("hook stays silent for done/placeholder cards and injects active ones")
 
 
+
+def test_card_check_flags_budget_and_placeholders():
+    """`check` warns on unfilled placeholders and over-cap sections, and --strict
+    turns those warnings into a non-zero exit so CI can gate on them."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        # The shipped template still has an unfilled OBJECTIVE placeholder.
+        tmpl = SKILL / "assets" / "throughline-card.template.md"
+        proc = run([sys.executable, str(CARD), "check", "--card", str(tmpl)])
+        if proc.returncode != 0 or "unfilled" not in proc.stderr:
+            fail("check warns (rc 0) on an unfilled template", proc.stdout + proc.stderr)
+        proc = run([sys.executable, str(CARD), "check", "--strict", "--card", str(tmpl)])
+        if proc.returncode != 1:
+            fail("check --strict exits non-zero on a placeholder objective", proc.stdout + proc.stderr)
+
+        # A filled, in-budget card is clean.
+        good = root / "good.md"
+        good.write_text(
+            "# THROUGHLINE\nmeta:\n  size_budget_bytes: 8000\n  status: active\n"
+            "OBJECTIVE: ship the real thing\n",
+            encoding="utf-8")
+        proc = run([sys.executable, str(CARD), "check", "--strict", "--card", str(good)])
+        if proc.returncode != 0:
+            fail("check passes a filled, in-budget card", proc.stdout + proc.stderr)
+
+        # Too many DECISIONS entries trips the section cap.
+        rows = "\n".join(f"- 2026-01-{i:02d} | decision {i} | reason" for i in range(1, 13))
+        over = root / "over.md"
+        over.write_text(
+            "# THROUGHLINE\nmeta:\n  size_budget_bytes: 8000\n  status: active\n"
+            "OBJECTIVE: ship it\n## === DECISIONS ===\n" + rows + "\n",
+            encoding="utf-8")
+        proc = run([sys.executable, str(CARD), "check", "--strict", "--card", str(over)])
+        if proc.returncode != 1 or "DECISIONS" not in proc.stderr:
+            fail("check flags an over-cap DECISIONS section", proc.stdout + proc.stderr)
+        ok("card check flags budget, section caps, and placeholders")
+
+
+def test_card_default_resolves_to_git_root():
+    """init/done run from a subdirectory must resolve the same root card the hook
+    walks up to find, so writer and reader never disagree on the card's location."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run(["git", "init", "-q", str(root)])
+        deep = root / "sub" / "deep"
+        deep.mkdir(parents=True)
+
+        proc = run([sys.executable, str(CARD), "init",
+                    "--objective", "add streaming API", "--task-type", "feature"],
+                   cwd=str(deep))
+        if proc.returncode != 0:
+            fail("init from a subdir succeeds", proc.stdout + proc.stderr)
+        if not (root / ".throughline.md").is_file():
+            fail("init anchors the card at the git root, not the subdir",
+                 str(list(root.rglob(".throughline.md"))))
+        if (deep / ".throughline.md").exists():
+            fail("init must not leave a stray card in the subdir", "found subdir card")
+
+        # done from the same subdir touches the root card, not a new one.
+        proc = run([sys.executable, str(CARD), "done"], cwd=str(deep))
+        if proc.returncode != 0 or "status: done" not in (root / ".throughline.md").read_text(encoding="utf-8"):
+            fail("done from a subdir updates the root card", proc.stdout + proc.stderr)
+        ok("card default path resolves to the git root from any subdir")
+
+
+
+def test_installer_pins_real_interpreter():
+    """The hook command must embed the installing interpreter's real path, not a
+    bare `python3`, so the hook still fires where `python3` is absent from PATH."""
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        codex_home = home / ".codex"
+        codex_home.mkdir()
+        (codex_home / "config.toml").write_text('model = "gpt-5"\n', encoding="utf-8")
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["CODEX_HOME"] = str(codex_home)
+
+        if run([sys.executable, str(INSTALL)], env=env).returncode != 0:
+            fail("install runs for interpreter-pinning check", "install failed")
+        text = (codex_home / "config.toml").read_text(encoding="utf-8")
+
+        # The command names our injector via an absolute interpreter path, and
+        # never leaves a bare `python3 "...` that a minimal PATH could not resolve.
+        if os.path.basename(sys.executable) not in text:
+            fail("hook command embeds the installing interpreter", text)
+        if 'command = "python3 ' in text or 'command = "python3"' in text:
+            fail("hook command must not use a bare python3", text)
+        ok("installer pins the real interpreter path in the hook command")
+
+
+
+def test_card_new_and_resume_two_verbs():
+    """The two verbs carry intent with no flag or prompt: `new` always opens a fresh
+    objective line and archives whatever was there; `resume` always keeps the current
+    line and never archives. Coming back to the same task uses `resume`; a genuine
+    change of direction uses `new`, and the old objective is recoverable from archive."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        card = root / ".throughline.md"
+
+        if run([sys.executable, str(CARD), "new", "--objective", "Original goal A"],
+               cwd=str(root)).returncode != 0:
+            fail("new writes the first active card", "nonzero rc")
+
+        # resume is the "same task, keep going" path: objective unchanged, still active.
+        proc = run([sys.executable, str(CARD), "resume"], cwd=str(root))
+        if proc.returncode != 0:
+            fail("resume keeps working the current card", proc.stderr)
+        if "Original goal A" not in card.read_text(encoding="utf-8"):
+            fail("resume preserves the live objective", card.read_text(encoding="utf-8")[:200])
+
+        # new is the deliberate change of direction: archive A, lock B - no flag needed.
+        proc = run([sys.executable, str(CARD), "new", "--objective", "Corrected goal B"],
+                   cwd=str(root))
+        if proc.returncode != 0:
+            fail("new replaces an active card without a flag", proc.stderr)
+        now = card.read_text(encoding="utf-8")
+        if "Corrected goal B" not in now or "Original goal A" in now:
+            fail("new locks the new objective and drops the old", now[:200])
+        arch = list((root / ".throughline" / "archive").glob("*.md"))
+        if not any("Original goal A" in a.read_text(encoding="utf-8") for a in arch):
+            fail("new archives (never deletes) the previous objective for recovery", str(arch))
+
+        # after done, `new` opens the next task exactly the same way.
+        if run([sys.executable, str(CARD), "done"], cwd=str(root)).returncode != 0:
+            fail("done marks the card complete", "nonzero rc")
+        if run([sys.executable, str(CARD), "new", "--objective", "Fresh task C"],
+               cwd=str(root)).returncode != 0:
+            fail("new opens a task after done", "refused after done")
+        if "Fresh task C" not in card.read_text(encoding="utf-8"):
+            fail("post-done new locks the new objective", card.read_text(encoding="utf-8")[:200])
+        ok("new opens a fresh line and archives; resume keeps the current one")
+
+
 def main():
     test_prompt_contract()
     test_card_contract()
@@ -402,9 +563,13 @@ def main():
     test_codex_install_cleans_legacy_hooks_json()
     test_installer_has_single_codex_entrypoint()
     test_codex_inline_hooks_wiring()
-    test_card_init_archives_previous_and_resets()
-    test_card_done_reopen_and_template_guard()
+    test_card_new_archives_previous_and_resets()
+    test_card_done_resume_and_template_guard()
     test_hook_silent_on_done_and_placeholder_cards()
+    test_card_check_flags_budget_and_placeholders()
+    test_card_default_resolves_to_git_root()
+    test_installer_pins_real_interpreter()
+    test_card_new_and_resume_two_verbs()
 
 
 if __name__ == "__main__":

@@ -16,9 +16,13 @@ import argparse
 import json
 import os
 import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "throughline_hook.py")
+# Pin the interpreter that ran the installer so the hook fires even when the
+# hook runtime has no `python3` on PATH (Windows, minimal shells, pyenv shims).
+PYTHON = sys.executable or "python3"
 COMPACT_PROMPT = os.path.normpath(os.path.join(HERE, "..", "assets", "compact_prompt.md"))
 TAG = "throughline"
 MANAGED = "# throughline-managed"
@@ -36,7 +40,7 @@ CODEX_EVENTS = {
 
 
 def _cmd():
-    return f'python3 "{HOOK}"'
+    return f'"{PYTHON}" "{HOOK}"'
 
 
 def _toml_escape(s):
@@ -49,7 +53,7 @@ def _codex_hooks_block():
     Codex rejects `hooks = "./hooks.json"`; hooks must be inline tables. The
     compact-prompt override lives in the same managed block as a top-level key.
     """
-    cmd = f'python3 "{_toml_escape(HOOK)}"'
+    cmd = f'"{_toml_escape(PYTHON)}" "{_toml_escape(HOOK)}"'
     lines = [
         BLOCK_START,
         f'experimental_compact_prompt_file = "{_toml_escape(COMPACT_PROMPT)}"',
